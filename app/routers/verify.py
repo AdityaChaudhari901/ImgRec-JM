@@ -124,8 +124,16 @@ async def verify_claim(request: Request, body: VerifyClaimRequest) -> VerifyClai
     # Reused-image fraud check (hard signal) — see dedup_service.
     dedup_result = await find_duplicates(image_phash, body.order_id, body.user_id)
 
-    # Web reverse-search result (resilient — never raises).
-    web_result = await web_task if web_task is not None else WebProvenanceResult(checked=False)
+    # Web reverse-search result (Task 2 never raises; guarded so resilience is
+    # self-contained even if that guarantee ever regresses).
+    if web_task is not None:
+        try:
+            web_result = await web_task
+        except Exception:  # noqa: BLE001 - a web-search failure must not fail the claim
+            logger.warning("web_provenance_task_failed_unexpectedly", order_id=body.order_id)
+            web_result = WebProvenanceResult(checked=False)
+    else:
+        web_result = WebProvenanceResult(checked=False)
 
     response = build_verify_response(
         gemini, ai_check, body.order_id, body.user_id, dedup_result, web_result

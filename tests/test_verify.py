@@ -1,9 +1,9 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
-
 from unittest.mock import patch
 
 from app.main import app
+from app.services.web_provenance import WebProvenanceResult
 
 HEADERS = {"x-api-key": "test-secret", "Content-Type": "application/json"}
 
@@ -86,8 +86,6 @@ async def test_timeout_returns_504():
             r = await c.post("/api/v1/imgrecog/verify-claim", json=PAYLOAD, headers=HEADERS)
     assert r.status_code == 504
 
-
-from app.services.web_provenance import WebProvenanceResult
 
 _WEB_CLEAN = WebProvenanceResult(checked=True, full_match_count=0, distinct_domains=0)
 _WEB_STOLEN = WebProvenanceResult(checked=True, full_match_count=3, distinct_domains=3)
