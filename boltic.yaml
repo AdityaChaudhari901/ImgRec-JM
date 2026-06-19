@@ -75,8 +75,8 @@ serverlessConfig:
           Name: port
     Scaling:
         AutoStop: false
-        Min: 1
-        Max: 3
+        Min: 10
+        Max: 10
         MaxIdleTime: 300
     Resources:
         CPU: 1

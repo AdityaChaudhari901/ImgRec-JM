@@ -1,13 +1,13 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
-pydantic==2.7.0
+pydantic==2.13.4
 pydantic-settings==2.3.0
 google-genai==2.8.0
 Pillow==10.3.0
 dateparser==1.2.0
 structlog==24.2.0
 slowapi==0.1.9
-httpx==0.27.0
+httpx==0.28.1
 python-dotenv==1.0.1
 # --- Phase 1: durable audit store + object storage -----------------------
 # Async Postgres via SQLAlchemy 2.0 + asyncpg; Alembic for reversible migrations.
