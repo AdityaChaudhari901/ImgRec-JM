@@ -1,10 +1,11 @@
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -110,6 +111,17 @@ async def ready():
         status_code=200 if ok else 503,
         content={"status": "ready" if ok else "not_ready", "checks": checks},
     )
+
+
+_DEMO_INDEX = Path(__file__).resolve().parent.parent / "demo" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+async def demo_ui():
+    """Serve the bundled demo UI so the deployment has a working frontend."""
+    if _DEMO_INDEX.is_file():
+        return FileResponse(_DEMO_INDEX)
+    return JSONResponse({"service": "Kaily ImgRec API", "docs": "/docs"})
 
 
 # Boltic serverless compatibility — export the ASGI app.
