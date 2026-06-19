@@ -75,6 +75,8 @@ async def test_vision_error_degrades_to_unchecked():
 
 @pytest.mark.asyncio
 async def test_bad_base64_degrades_to_unchecked():
-    result = await detect_web_provenance("not-base64-@@@")
+    with patch.object(web_provenance, "_get_vision_client") as gc:
+        result = await detect_web_provenance("not-base64-@@@")
     assert isinstance(result, WebProvenanceResult)
     assert result.checked is False
+    gc.assert_not_called()  # rejected at decode, before any Vision call

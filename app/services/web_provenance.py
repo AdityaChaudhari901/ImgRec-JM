@@ -80,8 +80,12 @@ def _count_distinct_domains(urls: List[str]) -> int:
 
 
 def _decode(image_base64: str) -> bytes:
-    raw = image_base64.split(",", 1)[-1].strip()
-    return base64.b64decode(raw + "==", validate=False)
+    # Strip the optional data-URI prefix and any whitespace, restore padding,
+    # then decode WITH alphabet validation so clearly-invalid input raises here
+    # (degrading to checked=False) instead of wasting a Vision API call on garbage.
+    raw = "".join(image_base64.split(",", 1)[-1].split())
+    raw += "=" * (-len(raw) % 4)
+    return base64.b64decode(raw, validate=True)
 
 
 def _blocking_detect(image_bytes: bytes) -> WebProvenanceResult:
