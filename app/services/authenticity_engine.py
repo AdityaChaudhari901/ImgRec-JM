@@ -34,8 +34,10 @@ from app.models.verify_response import (
     ProductMatchCheck,
     RecognitionResult,
     VerifyClaimResponse,
+    WebProvenanceCheck,
 )
 from app.services.dedup_service import DedupResult
+from app.services.web_provenance import WebProvenanceResult
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,10 +59,22 @@ def _f(value, default: float = 0.0) -> float:
         return default
 
 
+def _web_hard(web_result: Optional[WebProvenanceResult]) -> bool:
+    """A confirmed full match across enough distinct domains is a hard fraud
+    signal — a genuine damage photo does not live on multiple unrelated sites."""
+    return bool(
+        web_result
+        and web_result.checked
+        and web_result.full_match_count > 0
+        and web_result.distinct_domains >= settings.web_match_hard_min_domains
+    )
+
+
 def score_claim(
     gemini: dict,
     ai_check: AIGeneratedCheck,
     dedup_result: Optional[DedupResult] = None,
+    web_result: Optional[WebProvenanceResult] = None,
 ) -> Tuple[float, str, str, AuthenticityChecks]:
     """Return (authenticity_score, verdict, recommended_action, checks)."""
     align_raw = gemini.get("image_comment_alignment", {}) or {}
@@ -87,11 +101,31 @@ def score_claim(
         prior = ", ".join(dedup_result.matched_order_ids())
         other_flags.append(f"duplicate_image_across_claims: prior orders [{prior}]")
 
+    web_hard = _web_hard(web_result)
+    web_check = None
+    if web_result is not None and web_result.checked:
+        reason = (
+            f"image found on {web_result.distinct_domains} domain(s), "
+            f"{web_result.full_match_count} full match(es)"
+        )
+        web_check = WebProvenanceCheck(
+            checked=True,
+            full_matches=web_result.full_match_count,
+            partial_matches=web_result.partial_match_count,
+            distinct_domains=web_result.distinct_domains,
+            reason=reason,
+        )
+        if web_hard:
+            other_flags.append(f"web_download_match: {reason}")
+    elif web_result is not None:
+        web_check = WebProvenanceCheck(checked=False)
+
     checks = AuthenticityChecks(
         ai_generated=ai_check,
         image_comment_alignment=alignment,
         product_match=product,
         other_flags=other_flags,
+        web_provenance=web_check,
     )
 
     # Base score from the two reliable signals.
@@ -108,11 +142,17 @@ def score_claim(
     if ai_check.is_ai_generated:
         score *= 1.0 - settings.authenticity_ai_penalty * ai_check.ai_probability
     score -= settings.authenticity_flag_penalty * len(other_flags)
+    if web_result is not None and web_result.checked and not web_hard:
+        web_hits = min(
+            web_result.full_match_count + web_result.partial_match_count,
+            settings.web_match_penalty_cap,
+        )
+        score -= settings.web_match_soft_penalty * web_hits
     score = _clamp(score)
-    if hard_duplicate:
-        score = 0.0  # a confirmed cross-claim reuse is inauthentic by definition
+    if hard_duplicate or web_hard:
+        score = 0.0  # a confirmed reuse / web-download is inauthentic by definition
 
-    verdict, action = _route(score, ai_confident, ai_check.source, hard_duplicate)
+    verdict, action = _route(score, ai_confident, ai_check.source, hard_duplicate or web_hard)
     return round(score, 3), verdict, action, checks
 
 
@@ -207,21 +247,22 @@ def build_verify_response(
     order_id: str,
     user_id: str,
     dedup_result: Optional[DedupResult] = None,
+    web_result: Optional[WebProvenanceResult] = None,
 ) -> VerifyClaimResponse:
-    score, verdict, action, checks = score_claim(gemini, ai_check, dedup_result)
+    score, verdict, action, checks = score_claim(gemini, ai_check, dedup_result, web_result)
     ai_confident = (
         ai_check.is_ai_generated
         and ai_check.ai_probability >= settings.ai_detection_min_confidence
     )
-    hard_duplicate = bool(dedup_result and dedup_result.is_cross_claim_duplicate)
-    # A hard duplicate is a deterministic certainty -> full decision confidence.
-    conf = 1.0 if hard_duplicate else decision_confidence(score, action, ai_check, ai_confident)
+    hard_signal = bool(dedup_result and dedup_result.is_cross_claim_duplicate) or _web_hard(web_result)
+    conf = 1.0 if hard_signal else decision_confidence(score, action, ai_check, ai_confident)
     return VerifyClaimResponse(
         success=True,
         request_id=generate_request_id(),
         order_id=order_id,
         user_id=user_id,
         authenticity_score=score,
+        score_out_of_100=round(score * 100),
         decision_confidence=conf,
         verdict=verdict,  # type: ignore[arg-type]
         recommended_action=action,  # type: ignore[arg-type]

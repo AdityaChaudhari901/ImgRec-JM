@@ -39,6 +39,71 @@ def build_generation_config(max_output_tokens: int = 2048) -> types.GenerateCont
     return types.GenerateContentConfig(**kwargs)
 
 
+def build_claim_generation_config(
+    max_output_tokens: int = 2048,
+) -> types.GenerateContentConfig:
+    """Generation config for the claim analysis, with a response_schema so the
+    JSON shape can't drift or come back malformed. Mirrors build_generation_config
+    but pins the structure analyze_claim depends on."""
+    claim_schema = {
+        "type": "object",
+        "properties": {
+            "recognition": {
+                "type": "object",
+                "properties": {
+                    "scene": {"type": "string"},
+                    "objects": {"type": "array", "items": {"type": "string"}},
+                    "extracted_text": {"type": "string"},
+                },
+            },
+            "ai_generated": {
+                "type": "object",
+                "properties": {
+                    "ai_probability": {"type": "number"},
+                    "signals": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+            "image_comment_alignment": {
+                "type": "object",
+                "properties": {
+                    "score": {"type": "number"},
+                    "aligned": {"type": "boolean"},
+                    "reason": {"type": "string"},
+                },
+            },
+            "product_match": {
+                "type": "object",
+                "properties": {
+                    "detected_product": {"type": "string"},
+                    "matches": {"type": "boolean"},
+                    "score": {"type": "number"},
+                    "reason": {"type": "string"},
+                },
+            },
+            "other_flags": {"type": "array", "items": {"type": "string"}},
+            "summary": {"type": "string"},
+        },
+        "required": [
+            "recognition",
+            "ai_generated",
+            "image_comment_alignment",
+            "product_match",
+            "summary",
+        ],
+    }
+    kwargs = dict(
+        temperature=0.1,
+        max_output_tokens=max_output_tokens,
+        response_mime_type="application/json",
+        response_schema=claim_schema,
+    )
+    try:
+        kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+    except Exception:  # noqa: BLE001
+        pass
+    return types.GenerateContentConfig(**kwargs)
+
+
 def get_client() -> genai.Client:
     """Return a cached google-genai client for the configured provider.
 

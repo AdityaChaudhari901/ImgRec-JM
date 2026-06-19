@@ -6,6 +6,7 @@ from app.services.authenticity_engine import (
     score_claim,
 )
 from app.services.dedup_service import DedupResult, DuplicateMatch
+from app.services.web_provenance import WebProvenanceResult
 
 NO_AI = AIGeneratedCheck(is_ai_generated=False, ai_probability=0.1, source="internal", signals=[])
 
@@ -140,3 +141,48 @@ def test_hard_duplicate_decision_confidence_is_max():
     assert resp.recommended_action == "reject"
     assert resp.decision_confidence == 1.0
     assert "JM-OTHER" in resp.agent_comment
+
+
+def _web(full=0, partial=0, domains=0, checked=True):
+    return WebProvenanceResult(
+        full_match_count=full, partial_match_count=partial,
+        distinct_domains=domains, checked=checked,
+    )
+
+
+def test_web_match_two_domains_forces_reject():
+    score, verdict, action, checks = score_claim(
+        _gemini(0.99, True, 0.99, True), NO_AI, web_result=_web(full=2, domains=2)
+    )
+    assert verdict == "likely_fraud"
+    assert action == "reject"
+    assert score == 0.0
+    assert checks.web_provenance is not None and checks.web_provenance.distinct_domains == 2
+
+
+def test_web_match_single_domain_is_soft_penalty_only():
+    clean = score_claim(_gemini(0.9, True, 0.9, True), NO_AI)[0]
+    soft = score_claim(_gemini(0.9, True, 0.9, True), NO_AI, web_result=_web(full=1, domains=1))[0]
+    assert soft < clean
+    assert soft > 0.0  # not a hard reject
+
+
+def test_web_unchecked_leaves_score_unchanged():
+    base = score_claim(_gemini(0.9, True, 0.9, True), NO_AI)[0]
+    unchecked = score_claim(
+        _gemini(0.9, True, 0.9, True), NO_AI, web_result=_web(checked=False)
+    )[0]
+    assert unchecked == base
+
+
+def test_score_out_of_100_matches_authenticity_score():
+    resp = build_verify_response(_gemini(0.9, True, 0.9, True), NO_AI, "JM-1", "u_1")
+    assert resp.score_out_of_100 == round(resp.authenticity_score * 100)
+
+
+def test_web_hard_decision_confidence_is_max():
+    resp = build_verify_response(
+        _gemini(0.99, True, 0.99, True), NO_AI, "JM-1", "u_1", web_result=_web(full=3, domains=3)
+    )
+    assert resp.recommended_action == "reject"
+    assert resp.decision_confidence == 1.0
