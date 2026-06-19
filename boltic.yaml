@@ -1,0 +1,83 @@
+# ============================================================================
+# Boltic Configuration File - imgrec
+# ============================================================================
+#
+# ⚠️  WARNING: Changes to this file will directly impact your deployed application!
+#     - Env changes will update environment variables
+#     - Scaling changes will affect auto-scaling behavior
+#     - PortMap changes will modify exposed ports
+#
+# This file is synced with the Boltic UI. You can edit settings here or in the UI.
+#
+# ----------------------------------------------------------------------------
+# SERVERLESS CONFIG GUIDE
+# ----------------------------------------------------------------------------
+#
+# Environment Variables (Env):
+#   serverlessConfig:
+#     Env:
+#       MY_VAR: "my_value"
+#       DATABASE_URL: "postgres://..."
+#       API_KEY: "secret-key"
+#
+# Port Mapping (PortMap):
+#   serverlessConfig:
+#     PortMap:
+#       - Name: "testhttp"
+#         Port: 8080
+#         Protocol: "http"
+#       - Name: "test https"
+#         Port: 9090
+#         Protocol: "https"
+#
+# Scaling Configuration:
+#   serverlessConfig:
+#     Scaling:
+#       AutoStop: true       # Auto-stop when idle
+#       Min: 1               # Minimum instances
+#       Max: 5               # Maximum instances
+#       MaxIdleTime: 300     # Seconds before auto-stop
+#
+# Resources:
+#   serverlessConfig:
+#     Resources:
+#       CPU: 0.5             # CPU cores (0.1 to 4)
+#       MemoryMB: 256        # Memory in MB
+#       MemoryMaxMB: 512     # Max memory in MB
+#
+# Timeout:
+#   serverlessConfig:
+#     Timeout: 120           # Request timeout in seconds
+#
+# For more info: https://docs.boltic.io/compute/serverless/application-config
+# ============================================================================
+
+app: imgrec
+build:
+    builtin: dockerfile
+    ignorefile: .gitignore
+language: python/3.11
+region: asia-south1
+serverlessConfig:
+    Env:
+        AI_DETECTOR_PROVIDER: internal
+        ENVIRONMENT: Staging
+        GEMINI_MODEL: gemini-2.5-flash
+        LOG_LEVEL: info
+        USE_VERTEX: "true"
+        VERTEX_PROJECT_ID: alien-slice-499511-f8
+        VERTEX_REGION: us-east5
+        WEB_PROVENANCE_ENABLED: "true"
+    PortMap:
+        - Protocol: https
+          Port: 8080
+          Name: port
+    Scaling:
+        AutoStop: false
+        Min: 10
+        Max: 10
+        MaxIdleTime: 300
+    Resources:
+        CPU: 1
+        MemoryMB: 2048
+        MemoryMaxMB: 2048
