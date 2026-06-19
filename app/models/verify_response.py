@@ -34,10 +34,19 @@ class RecognitionResult(BaseModel):
     extracted_text: Optional[str] = None  # all visible text / label OCR
 
 
+class WebProvenanceCheck(BaseModel):
+    checked: bool  # False when Vision was skipped/unavailable
+    full_matches: int = 0
+    partial_matches: int = 0
+    distinct_domains: int = 0
+    reason: Optional[str] = None
+
+
 class AuthenticityChecks(BaseModel):
     ai_generated: AIGeneratedCheck
     image_comment_alignment: AlignmentCheck
     product_match: ProductMatchCheck
+    web_provenance: Optional[WebProvenanceCheck] = None
     other_flags: List[str] = []
 
 
@@ -50,6 +59,7 @@ class VerifyClaimResponse(BaseModel):
     user_id: str
     # Final auditable score computed deterministically from the checks below.
     authenticity_score: float  # 0..1
+    score_out_of_100: int  # authenticity_score surfaced as 0..100 (req 3)
     # Confidence in the recommended_action (how decisively the score/AI verdict
     # sits in its band). Kaily can require e.g. >= 0.8 before acting unattended.
     decision_confidence: float  # 0..1
