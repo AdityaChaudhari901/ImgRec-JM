@@ -52,6 +52,19 @@ class Settings(BaseSettings):
     authenticity_auto_approve_threshold: float = 0.75
     authenticity_review_threshold: float = 0.45
 
+    # ---- Web reverse-image-search (req 1b): "website-downloaded" detection ---
+    # Google Cloud Vision WEB_DETECTION. Off -> signal skipped (checked=False).
+    web_provenance_enabled: bool = True
+    # Full matches across at least this many DISTINCT domains -> hard fraud signal
+    # (auto-reject, like a cross-claim duplicate). Raise high to disable hard-reject.
+    web_match_hard_min_domains: int = 2
+    # Soft, proportional score penalty per web match below the hard threshold.
+    web_match_soft_penalty: float = 0.15
+    # Max matches counted toward the soft penalty.
+    web_match_penalty_cap: int = 3
+    # Hard timeout (seconds) for the Vision call.
+    vision_timeout_seconds: int = 8
+
     # ---- Phase 1: durable audit store + object storage --------------------
     # Async Postgres DSN (postgresql+asyncpg://...). Empty -> in-memory audit
     # repository (dev only; logs a loud warning). Production REQUIRES a real DSN.
