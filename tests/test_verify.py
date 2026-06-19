@@ -85,3 +85,33 @@ async def test_timeout_returns_504():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             r = await c.post("/api/v1/imgrecog/verify-claim", json=PAYLOAD, headers=HEADERS)
     assert r.status_code == 504
+
+
+from app.services.web_provenance import WebProvenanceResult
+
+_WEB_CLEAN = WebProvenanceResult(checked=True, full_match_count=0, distinct_domains=0)
+_WEB_STOLEN = WebProvenanceResult(checked=True, full_match_count=3, distinct_domains=3)
+
+
+@pytest.mark.asyncio
+async def test_verify_includes_score_out_of_100_and_web_check():
+    with patch("app.routers.verify.analyze_claim", return_value=GEMINI_AUTHENTIC), \
+         patch("app.routers.verify.detect_web_provenance", return_value=_WEB_CLEAN):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/api/v1/imgrecog/verify-claim", json=PAYLOAD, headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["score_out_of_100"] == round(body["authenticity_score"] * 100)
+    assert body["checks"]["web_provenance"]["checked"] is True
+
+
+@pytest.mark.asyncio
+async def test_verify_web_download_match_rejects():
+    with patch("app.routers.verify.analyze_claim", return_value=GEMINI_AUTHENTIC), \
+         patch("app.routers.verify.detect_web_provenance", return_value=_WEB_STOLEN):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/api/v1/imgrecog/verify-claim", json=PAYLOAD, headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["recommended_action"] == "reject"
+    assert body["score_out_of_100"] == 0
