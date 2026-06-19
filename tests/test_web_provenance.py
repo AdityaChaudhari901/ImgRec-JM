@@ -80,3 +80,14 @@ async def test_bad_base64_degrades_to_unchecked():
     assert isinstance(result, WebProvenanceResult)
     assert result.checked is False
     gc.assert_not_called()  # rejected at decode, before any Vision call
+
+
+@pytest.mark.asyncio
+async def test_vision_error_message_degrades_to_unchecked():
+    fake = _fake_web_detection(full=2, pages=["https://a.com/p"])
+    fake.error = SimpleNamespace(message="RESOURCE_EXHAUSTED: quota")
+    with patch.object(web_provenance, "_get_vision_client") as gc:
+        gc.return_value.web_detection.return_value = fake
+        result = await detect_web_provenance("data:image/jpeg;base64,/9j/fake")
+    assert result.checked is False
+    assert result.full_match_count == 0

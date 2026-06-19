@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from unittest.mock import patch
@@ -113,3 +115,32 @@ async def test_verify_web_download_match_rejects():
     body = r.json()
     assert body["recommended_action"] == "reject"
     assert body["score_out_of_100"] == 0
+
+
+@pytest.mark.asyncio
+async def test_web_task_cancelled_when_dedup_fails():
+    cancelled = {"v": False}
+    started = asyncio.Event()
+
+    async def slow_web(_img):
+        started.set()
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled["v"] = True
+            raise
+        return WebProvenanceResult(checked=False)
+
+    async def boom(*a, **k):
+        await started.wait()          # ensure the web task is in-flight first
+        raise RuntimeError("dedup down")
+
+    with patch("app.routers.verify.analyze_claim", return_value=GEMINI_AUTHENTIC), \
+         patch("app.routers.verify.detect_web_provenance", new=slow_web), \
+         patch("app.routers.verify.find_duplicates", new=boom):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/api/v1/imgrecog/verify-claim", json=PAYLOAD, headers=HEADERS)
+
+    assert r.status_code == 500
+    await asyncio.sleep(0.05)          # let the cancellation propagate
+    assert cancelled["v"] is True

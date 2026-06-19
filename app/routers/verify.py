@@ -115,14 +115,28 @@ async def verify_claim(request: Request, body: VerifyClaimRequest) -> VerifyClai
         logger.error("verify_failed", error=str(exc), order_id=body.order_id)
         raise HTTPException(status_code=500, detail="Claim analysis failed")
 
-    # AI-generated check: Sightengine ran in parallel; internal needs Gemini's hint.
-    if ai_task is not None:
-        ai_check = await ai_task
-    else:
-        ai_check = await detect_ai_generated(body.image_base64, gemini.get("ai_generated", {}))
+    # Resolve the remaining signals. If one fails, cancel any still-pending
+    # fan-out task before propagating, so a background task never leaks.
+    try:
+        # AI-generated check: Sightengine ran in parallel; internal needs Gemini's hint.
+        if ai_task is not None:
+            ai_check = await ai_task
+        else:
+            ai_check = await detect_ai_generated(body.image_base64, gemini.get("ai_generated", {}))
 
-    # Reused-image fraud check (hard signal) — see dedup_service.
-    dedup_result = await find_duplicates(image_phash, body.order_id, body.user_id)
+        # Reused-image fraud check (hard signal) — see dedup_service.
+        dedup_result = await find_duplicates(image_phash, body.order_id, body.user_id)
+    except BaseException as exc:
+        if web_task is not None and not web_task.done():
+            web_task.cancel()
+        if ai_task is not None and not ai_task.done():
+            ai_task.cancel()
+        if isinstance(exc, HTTPException):
+            raise
+        if not isinstance(exc, Exception):
+            raise  # propagate BaseException subclasses that are not Exception (e.g. CancelledError)
+        logger.error("verify_signal_failed", error=str(exc), order_id=body.order_id)
+        raise HTTPException(status_code=500, detail="Signal resolution failed")
 
     # Web reverse-search result (Task 2 never raises; guarded so resilience is
     # self-contained even if that guarantee ever regresses).
