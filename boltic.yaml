@@ -64,6 +64,7 @@ serverlessConfig:
         ENVIRONMENT: Staging
         GEMINI_MODEL: gemini-2.5-flash
         LOG_LEVEL: info
+        PORT: "8080"
         USE_VERTEX: "true"
         VERTEX_PROJECT_ID: alien-slice-499511-f8
         VERTEX_REGION: us-east5
@@ -74,8 +75,8 @@ serverlessConfig:
           Name: port
     Scaling:
         AutoStop: false
-        Min: 10
-        Max: 10
+        Min: 1
+        Max: 3
         MaxIdleTime: 300
     Resources:
         CPU: 1
