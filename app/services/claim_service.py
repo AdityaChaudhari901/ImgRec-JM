@@ -15,7 +15,7 @@ from typing import Optional
 from google.genai import types
 
 from app.config.settings import settings
-from app.services.gemini_service import build_generation_config, get_client
+from app.services.gemini_service import build_claim_generation_config, get_client
 from app.utils.image_utils import extract_base64_data
 from app.utils.logger import get_logger
 
@@ -108,7 +108,7 @@ async def analyze_claim(
     contents.append(prompt)
 
     client = get_client()
-    config = build_generation_config()
+    config = build_claim_generation_config()
 
     try:
         response = await asyncio.wait_for(
