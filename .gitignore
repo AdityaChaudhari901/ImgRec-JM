@@ -1,0 +1,12 @@
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+*.egg-info/
+# Phase 1: local audit DB + object-store artifacts
+*.db
+alembic_local.db
+/tmp/imgrecog-objects/
