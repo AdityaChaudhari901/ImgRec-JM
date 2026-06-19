@@ -6,6 +6,7 @@ from app.services.authenticity_engine import (
     score_claim,
 )
 from app.services.dedup_service import DedupResult, DuplicateMatch
+from app.services.web_provenance import WebProvenanceResult
 
 NO_AI = AIGeneratedCheck(is_ai_generated=False, ai_probability=0.1, source="internal", signals=[])
 
@@ -142,9 +143,6 @@ def test_hard_duplicate_decision_confidence_is_max():
     assert "JM-OTHER" in resp.agent_comment
 
 
-from app.services.web_provenance import WebProvenanceResult
-
-
 def _web(full=0, partial=0, domains=0, checked=True):
     return WebProvenanceResult(
         full_match_count=full, partial_match_count=partial,
@@ -163,7 +161,7 @@ def test_web_match_two_domains_forces_reject():
 
 
 def test_web_match_single_domain_is_soft_penalty_only():
-    clean = score_claim(_gemini(0.9, True, 0.9, True), NO_AI, web_result=_web())[0]
+    clean = score_claim(_gemini(0.9, True, 0.9, True), NO_AI)[0]
     soft = score_claim(_gemini(0.9, True, 0.9, True), NO_AI, web_result=_web(full=1, domains=1))[0]
     assert soft < clean
     assert soft > 0.0  # not a hard reject
