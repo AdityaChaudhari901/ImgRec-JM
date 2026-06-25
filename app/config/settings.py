@@ -187,6 +187,14 @@ class Settings(BaseSettings):
         if not self.redis_url:
             missing.append("REDIS_URL")
 
+        # Dispute money-vars must be sane or the engine makes wrong refund calls.
+        if self.refund_auto_approve_max < 0:
+            missing.append("REFUND_AUTO_APPROVE_MAX (must be >= 0)")
+        if not (0 <= self.dairy_min_shelf_pct <= 100):
+            missing.append("DAIRY_MIN_SHELF_PCT (must be 0..100)")
+        if self.non_fnv_near_expiry_days < 0:
+            missing.append("NON_FNV_NEAR_EXPIRY_DAYS (must be >= 0)")
+
         if missing:
             raise ValueError(
                 "Refusing to start in production — missing required config: "
