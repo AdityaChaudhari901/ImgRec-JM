@@ -13,6 +13,7 @@ from typing import List, Optional
 
 from app.config.settings import settings
 from app.models.dispute_request import Shipment
+from app.services.damage_analyzer import normalize_damage
 from app.services.ocr_parser import days_until_expiry, final_printed_mrp, shelf_left_pct
 
 
@@ -108,9 +109,59 @@ def _decide_expiry(observations: dict, shipment: Shipment) -> DisputeDecision:
                            recommendation=f"Reject: {days} days to expiry > {settings.non_fnv_near_expiry_days}.")
 
 
+def _decide_wrong_product(observations: dict, shipment: Shipment) -> DisputeDecision:
+    pm = observations.get("product_match") or {}
+    if pm.get("matches") is True:
+        return DisputeDecision(decision="reject", refund=_no_refund(), confidence=0.85,
+                               recommendation="Reject: delivered product matches the ordered item.")
+    if pm.get("matches") is False:
+        return DisputeDecision(decision="approve", refund=_full_refund(shipment), confidence=0.85,
+                               recommendation="Approve: delivered product does not match the ordered item.")
+    return _agent("low_confidence", "Could not confirm product match; agent to verify.")
+
+
+def _decide_damaged(observations: dict, shipment: Shipment) -> DisputeDecision:
+    dmg = normalize_damage(observations.get("damage") or {})
+    if dmg.get("detected"):
+        return DisputeDecision(decision="approve", refund=_full_refund(shipment), confidence=0.85,
+                               recommendation=f"Approve: {dmg.get('type') or 'damage'} visually confirmed.")
+    return DisputeDecision(decision="reject", refund=_no_refund(), confidence=0.8,
+                           recommendation="Reject: packaging appears intact, no damage visible.")
+
+
 def _decide_poor_quality(observations: dict, shipment: Shipment) -> DisputeDecision:
-    # Replaced with full logic in Task 8.
-    return _agent("low_confidence", "Quality assessment pending.")
+    q = observations.get("quality") or {}
+    if q.get("internal_defect"):
+        return _agent("internal_defect",
+                      "Internal defect / warranty / performance issue; route to agent.")
+    if q.get("poor_quality") and q.get("supports_claim"):
+        return DisputeDecision(decision="approve", refund=_full_refund(shipment), confidence=0.75,
+                               recommendation="Approve: visible quality defect supports the claim.")
+    return DisputeDecision(decision="reject", refund=_no_refund(), confidence=0.7,
+                           recommendation="Reject: product appears normal in the image.")
+
+
+def _decide_smell(observations: dict, shipment: Shipment) -> DisputeDecision:
+    spoil = (observations.get("spoilage") or {}).get("mold_or_visible_spoilage")
+    detailed = int(observations.get("_desc_len", 0)) >= 30
+    if spoil and detailed:
+        return DisputeDecision(decision="approve", refund=_full_refund(shipment), confidence=0.65,
+                               recommendation="Approve: detailed report plus visible spoilage proxy.")
+    return DisputeDecision(decision="reject", refund=_no_refund(), confidence=0.6,
+                           recommendation="Reject: insufficient evidence for a smell claim.")
+
+
+def _decide_quantity(observations: dict, shipment: Shipment) -> DisputeDecision:
+    count = observations.get("count") or {}
+    units = count.get("counted_units")
+    conf = float(count.get("confidence", 0.0))
+    if units is None or conf < 0.6:
+        return _agent("low_confidence", "Could not count units confidently; agent to verify quantity.")
+    if int(units) < shipment.quantity:
+        return DisputeDecision(decision="approve", refund=_full_refund(shipment), confidence=conf,
+                               recommendation=f"Approve: counted {int(units)} < ordered {shipment.quantity}.")
+    return DisputeDecision(decision="reject", refund=_no_refund(), confidence=conf,
+                           recommendation=f"Reject: counted {int(units)} ≥ ordered {shipment.quantity}.")
 
 
 # ---- escalation gates ------------------------------------------------------
@@ -174,4 +225,9 @@ def decide(category: Optional[str], source: str, observations: dict, shipment: S
 _BRANCHES = {
     "mrp_abuse": _decide_mrp,
     "expiry": _decide_expiry,
+    "wrong_product": _decide_wrong_product,
+    "damaged": _decide_damaged,
+    "poor_quality": _decide_poor_quality,
+    "smell": _decide_smell,
+    "quantity_mismatch": _decide_quantity,
 }
