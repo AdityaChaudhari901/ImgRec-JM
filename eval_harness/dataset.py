@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+DATA_DIR = Path(__file__).parent / "data"
+SEED_MANIFEST = DATA_DIR / "seed_manifest.jsonl"
+
 
 @dataclass
 class EvalCase:
