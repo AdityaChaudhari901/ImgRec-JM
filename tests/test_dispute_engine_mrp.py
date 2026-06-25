@@ -43,3 +43,28 @@ def test_mrp_unreadable_routes_agent():
     d = decide("mrp_abuse", "provided", obs, _ship(), False, _NO_SIGNALS)
     assert d.decision == "agent"
     assert "missing_shipment_data" in d.agent_flags or "low_confidence" in d.agent_flags
+
+
+def test_mrp_discount_below_printed_is_not_overcharge():
+    # Regression for the old printed-vs-recorded-MRP bug: charged BELOW the printed
+    # MRP (a discount) must reject, even though the recorded MRP differs.
+    obs = {"ocr": {"printed_mrp_values": [90.0]}}
+    # invoice 170 / qty 2 = 85 charged < printed 90 -> no overcharge
+    d = decide("mrp_abuse", "provided", obs, _ship(invoice_amount=170.0, quantity=2), False, _NO_SIGNALS)
+    assert d.decision == "reject"
+    assert d.refund["eligible"] is False
+
+
+def test_mrp_charged_above_printed_uses_invoice_amount():
+    obs = {"ocr": {"printed_mrp_values": [90.0]}}
+    # invoice 240 / qty 2 = 120 charged > printed 90 -> overcharge of 30/unit
+    d = decide("mrp_abuse", "provided", obs, _ship(invoice_amount=240.0, quantity=2), False, _NO_SIGNALS)
+    assert d.decision == "approve"
+    assert d.refund["amount"] == 60.0  # (120 - 90) * 2
+
+
+def test_mrp_without_shipment_routes_agent():
+    obs = {"ocr": {"printed_mrp_values": [90.0]}}
+    d = decide("mrp_abuse", "provided", obs, None, False, _NO_SIGNALS)
+    assert d.decision == "agent"
+    assert "missing_shipment_data" in d.agent_flags

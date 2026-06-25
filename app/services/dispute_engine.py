@@ -31,15 +31,25 @@ def _no_refund() -> dict:
             "assign_to_mpt": False, "seller_debit": False}
 
 
-def _full_refund(shipment: Shipment) -> dict:
-    unit = shipment.selling_price if shipment.selling_price is not None else 0.0
-    amount = round(unit * shipment.quantity, 2)
+def _full_refund(shipment: Optional[Shipment]) -> dict:
+    # No shipment pricing -> the verdict stands but the caller computes the amount
+    # from its own order data (amount left 0, type full_selling_price as the intent).
+    if shipment is None or shipment.selling_price is None:
+        return {"eligible": True, "amount": 0.0, "type": "full_selling_price",
+                "assign_to_mpt": False, "seller_debit": False}
+    amount = round(shipment.selling_price * shipment.quantity, 2)
     refund = {"eligible": True, "amount": amount, "type": "full_selling_price",
               "assign_to_mpt": False, "seller_debit": False}
     if shipment.seller_type == "3P":
         refund["assign_to_mpt"] = True
         refund["seller_debit"] = True
     return refund
+
+
+def _product_type(shipment: Optional[Shipment]) -> str:
+    # Without shipment we can't know the product class; default to non-FNV (the
+    # 45-day Legal Metrology rule), the common case for packaged goods.
+    return shipment.product_type if shipment else "non_fnv"
 
 
 def _agent(flag: str, recommendation: str, refund: Optional[dict] = None,
@@ -51,31 +61,43 @@ def _agent(flag: str, recommendation: str, refund: Optional[dict] = None,
 
 # ---- per-category branches -------------------------------------------------
 
-def _decide_mrp(observations: dict, shipment: Shipment) -> DisputeDecision:
+def _decide_mrp(observations: dict, shipment: Optional[Shipment]) -> DisputeDecision:
     values = (observations.get("ocr") or {}).get("printed_mrp_values")
     printed = final_printed_mrp(values)
     if printed is None:
         return _agent("low_confidence", "MRP not readable from the image; agent to verify.")
-    if shipment.mrp is None:
-        return _agent("missing_shipment_data", "Invoice MRP missing; agent to verify overcharge.")
-    if printed >= shipment.mrp:
+    if shipment is None:
+        return _agent("missing_shipment_data", "Shipment pricing missing; agent to verify overcharge.")
+
+    # What the customer was actually billed per unit. Prioritise the invoice
+    # amount over the selling price (per the requirement tip). Overcharge means
+    # the customer paid MORE than the MRP printed on the delivered pack — the same
+    # quantity drives both the decision and the refund, so they can't contradict.
+    charged_unit = None
+    if shipment.invoice_amount is not None and shipment.quantity:
+        charged_unit = shipment.invoice_amount / shipment.quantity
+    elif shipment.selling_price is not None:
+        charged_unit = shipment.selling_price
+    if charged_unit is None:
+        return _agent("missing_shipment_data", "No charged price on the order; agent to verify overcharge.")
+
+    charged_unit = round(charged_unit, 2)
+    if charged_unit <= printed:
         return DisputeDecision(
             decision="reject", refund=_no_refund(), confidence=0.9,
-            recommendation=(f"Reject: printed MRP ₹{printed} ≥ invoice MRP ₹{shipment.mrp}; "
-                            "no overcharge."),
-        )
-    # Overcharge confirmed: printed MRP on pack is below the MRP charged.
+            recommendation=f"Reject: charged ₹{charged_unit} ≤ printed MRP ₹{printed}; no overcharge.")
+
+    # Overcharge confirmed: charged above the printed MRP.
     if shipment.seller_type == "3P":
         refund = _full_refund(shipment)
-        rec = (f"Approve full refund ₹{refund['amount']} (3P overcharge: printed ₹{printed} < "
-               f"invoice MRP ₹{shipment.mrp}); assign ticket to MPT to debit seller.")
+        rec = (f"Approve full refund ₹{refund['amount']} (3P overcharge: charged ₹{charged_unit} > "
+               f"printed MRP ₹{printed}); assign ticket to MPT to debit seller.")
         return DisputeDecision(decision="approve", refund=refund, confidence=0.9, recommendation=rec)
-    charged_unit = shipment.selling_price if shipment.selling_price is not None else shipment.mrp
-    extra = round(max(0.0, charged_unit - printed) * shipment.quantity, 2)
-    refund = {"eligible": extra > 0, "amount": extra, "type": "price_difference",
+    extra = round((charged_unit - printed) * shipment.quantity, 2)
+    refund = {"eligible": True, "amount": extra, "type": "price_difference",
               "assign_to_mpt": False, "seller_debit": False}
-    rec = (f"Approve ₹{extra} price-difference refund (1P overcharge: printed ₹{printed} < "
-           f"invoice MRP ₹{shipment.mrp} × qty {shipment.quantity}).")
+    rec = (f"Approve ₹{extra} price-difference refund (1P overcharge: charged ₹{charged_unit} > "
+           f"printed MRP ₹{printed} × qty {shipment.quantity}).")
     return DisputeDecision(decision="approve", refund=refund, confidence=0.9, recommendation=rec)
 
 
@@ -83,13 +105,14 @@ def _today() -> date:
     return date.today()
 
 
-def _decide_expiry(observations: dict, shipment: Shipment) -> DisputeDecision:
+def _decide_expiry(observations: dict, shipment: Optional[Shipment]) -> DisputeDecision:
     ocr = observations.get("ocr") or {}
-    if shipment.product_type == "fnv":
+    product_type = _product_type(shipment)
+    if product_type == "fnv":
         # FNV has variable shelf life — judge by visible quality instead.
         return _decide_poor_quality(observations, shipment)
 
-    if shipment.product_type == "dairy":
+    if product_type == "dairy":
         pct = shelf_left_pct(ocr.get("manufacture_date"), ocr.get("expiry_date"), _today())
         if pct is None:
             return _agent("low_confidence", "Dairy MFG/EXP not readable; agent to verify shelf life.")
@@ -151,7 +174,9 @@ def _decide_smell(observations: dict, shipment: Shipment) -> DisputeDecision:
                            recommendation="Reject: insufficient evidence for a smell claim.")
 
 
-def _decide_quantity(observations: dict, shipment: Shipment) -> DisputeDecision:
+def _decide_quantity(observations: dict, shipment: Optional[Shipment]) -> DisputeDecision:
+    if shipment is None:
+        return _agent("missing_shipment_data", "Ordered quantity unknown; agent to verify shortfall.")
     count = observations.get("count") or {}
     units = count.get("counted_units")
     conf = float(count.get("confidence", 0.0))

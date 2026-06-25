@@ -51,6 +51,13 @@ def test_quantity_low_confidence_agent():
     assert d.decision == "agent"
 
 
+def test_damaged_without_shipment_still_decides():
+    obs = {"damage": {"detected": True, "type": "leakage", "severity": "severe"}}
+    d = decide("damaged", "provided", obs, None, False, _NO)
+    assert d.decision == "approve"
+    assert d.refund["eligible"] is True  # approved; amount left to caller (no shipment)
+
+
 def test_smell_with_spoilage_and_detail_approves():
     obs = {"spoilage": {"mold_or_visible_spoilage": True}, "_desc_len": 60}
     d = decide("smell", "provided", obs, _ship(), False, _NO)

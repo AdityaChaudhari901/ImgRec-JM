@@ -85,6 +85,28 @@ def test_rebuttal_not_replayed_from_original(monkeypatch):
     assert "rebuttal" in rebut["agent_flags"]
 
 
+def test_dispute_via_image_urls_no_shipment():
+    from app.services.image_url_fetcher import FetchedImage
+
+    async def fake_fetch(url, role="image"):
+        return FetchedImage(source_url=url, fetched_url=url, mime_type="image/jpeg",
+                            data=b"\xff\xd8\xff\xe0")
+
+    async def fake_analyze(*a, **k):
+        return {"damage": {"detected": True, "type": "leakage", "severity": "severe"},
+                "ai_generated": {"ai_probability": 0.0}}
+
+    body = {"image_urls": ["https://cdn.example.com/p.jpg"], "dispute_category": "damaged",
+            "ticket": {"description": "bottle leaking"}}
+    with patch("app.routers.dispute.download_image_url", side_effect=fake_fetch), \
+         patch("app.routers.dispute.analyze_dispute", side_effect=fake_analyze):
+        r = client.post("/api/v1/imgrecog/dispute", json=body, headers=HEADERS)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["category"] == "damaged" and d["decision"] == "approve"
+    assert d["order_tracking_id"] == "no-order"
+
+
 def test_dispute_insufficient_data_to_agent():
     body = _body(dispute_category=None,
                  ticket={"title": "", "description": "", "notes": "", "disposition_code": ""})
