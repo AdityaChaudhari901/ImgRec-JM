@@ -36,41 +36,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     port: int = 8000
 
-    # ---- Claim authenticity verification (/verify-claim) -------------------
-    # AI-generated-image detector provider. "internal" = free in-process
-    # (EXIF/C2PA metadata + Gemini visual heuristic). "sightengine" = call the
-    # paid specialist detector (~$0.01/image) for higher accuracy.
-    ai_detector_provider: str = "internal"
-    sightengine_api_user: str = ""
-    sightengine_api_secret: str = ""
-
-    # Deterministic scoring weights (alignment + product match form the base
-    # score; must sum to 1.0). The authenticity score is computed in code, not
-    # by the model, so eligibility is auditable.
-    authenticity_weight_alignment: float = 0.5
-    authenticity_weight_product_match: float = 0.5
-    # Penalty applied to the score when the image looks AI-generated (scaled by
-    # detector confidence). Each additional fraud flag subtracts this much.
-    authenticity_ai_penalty: float = 0.6
-    authenticity_flag_penalty: float = 0.1
-    # Min detector confidence before an AI-generated result influences routing.
+    # Min AI-generated probability before that signal influences dispute routing
+    # (the dispute engine routes a likely-synthetic image to an agent).
     ai_detection_min_confidence: float = 0.6
-    # Verdict thresholds on the final 0..1 authenticity score.
-    authenticity_auto_approve_threshold: float = 0.75
-    authenticity_review_threshold: float = 0.45
-
-    # ---- Web reverse-image-search (req 1b): "website-downloaded" detection ---
-    # Google Cloud Vision WEB_DETECTION. Off -> signal skipped (checked=False).
-    web_provenance_enabled: bool = True
-    # Full matches across at least this many DISTINCT domains -> hard fraud signal
-    # (auto-reject, like a cross-claim duplicate). Raise high to disable hard-reject.
-    web_match_hard_min_domains: int = 2
-    # Soft, proportional score penalty per web match below the hard threshold.
-    web_match_soft_penalty: float = 0.15
-    # Max matches counted toward the soft penalty.
-    web_match_penalty_cap: int = 3
-    # Hard timeout (seconds) for the Vision call.
-    vision_timeout_seconds: int = 8
 
     # ---- Phase 1: durable audit store + object storage --------------------
     # Async Postgres DSN (postgresql+asyncpg://...). Empty -> in-memory audit
@@ -86,10 +54,6 @@ class Settings(BaseSettings):
     # Retention hook — actual deletion job is wired in Phase 6. Placeholder pending
     # legal sign-off (see README open question).
     image_retention_days: int = 90
-    # Bumped whenever the analysis prompts change, recorded on every audit row so a
-    # decision is reproducible against the exact prompt that produced it.
-    scan_prompt_version: str = "scan-v1"
-    verify_prompt_version: str = "verify-v1"
 
     # ---- Phase 2: reused-image dedup (Redis-backed pHash index) -----------
     # Redis DSN (redis://... / rediss://...). Empty -> in-memory dedup index
@@ -110,12 +74,9 @@ class Settings(BaseSettings):
     url_fetch_processing_retries: int = 2
     url_fetch_processing_retry_delay_seconds: float = 0.5
     url_fetch_user_agent: str = "Kaily-ImgRec/1.0"
+    # Model-facing image downscale (reused by the /dispute URL fetch path).
     link_eval_model_max_edge_px: int = 1280
     link_eval_model_image_quality: int = 85
-    link_decision_min_authenticity_score: int = 70
-    link_decision_min_product_match_score: int = 75
-    link_decision_min_status_score: int = 60
-    link_decision_min_query_match_score: int = 60
 
     # PixelBin is a CDN/preprocessing layer, not a detector. Configure a template
     # when you want every safe source URL normalized through PixelBin before model
@@ -171,10 +132,6 @@ class Settings(BaseSettings):
                 missing.append("VERTEX_PROJECT_ID")
         elif self.google_api_key in _PLACEHOLDERS:
             missing.append("GOOGLE_API_KEY")
-        if self.ai_detector_provider == "sightengine" and (
-            not self.sightengine_api_user or not self.sightengine_api_secret
-        ):
-            missing.append("SIGHTENGINE_API_USER/SIGHTENGINE_API_SECRET")
         # A money-affecting service must have a durable audit trail in prod —
         # refuse to boot on the in-memory fallback (no record = silent payouts).
         if not self.database_url:

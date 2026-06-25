@@ -1,12 +1,17 @@
 # Kaily · ImgRec API
 
-Production-ready **Image Recognition API** for **Kaily**, the AI agent on JioMart's
-customer-support workflow. It inspects user-uploaded product photos, detects
-**expired** and **damaged** goods using **Gemini 2.0 Flash**, and returns a
-structured decision that Kaily uses to trigger **refund / exchange / no-action**.
+Production-ready **AI grocery dispute-verification API** for **Kaily**, the AI
+agent on JioMart's customer-support workflow. It exposes **one endpoint** —
+`POST /api/v1/imgrecog/dispute` — that takes a customer's images + ticket text +
+shipment data and returns a **deterministic** approve / reject / route-to-agent
+decision with a refund amount, across all dispute categories (wrong product,
+poor quality, damage, expiry/near-expiry, smell, MRP abuse, quantity mismatch).
 
-Stateless, single-endpoint, no database. Built with **FastAPI** + the
-**google-generativeai** SDK.
+The model only **observes** (OCR + visual evidence via **Gemini**); the Python
+**dispute engine** makes every money-affecting decision, so eligibility is
+auditable, idempotent, and never hallucinated. Built with **FastAPI** + the
+**google-genai** SDK, backed by Postgres (audit), Redis (dedup), and GCS (images).
+See [§9](#9-the-endpoint--grocery-dispute-verification) for the full contract.
 
 ---
 
@@ -81,7 +86,7 @@ On startup you'll see:
 [ImgRec] Server running on port 8000
 [ImgRec] Model: gemini-2.0-flash-001
 [ImgRec] Environment: development
-[ImgRec] Kaily endpoint: POST /api/v1/imgrecog/scan
+[ImgRec] Dispute endpoint: POST /api/v1/imgrecog/dispute
 [ImgRec] Health check: GET /health
 ```
 
@@ -90,364 +95,32 @@ Interactive docs: `http://localhost:8000/docs`
 
 ### Try the browser demo
 
-Open `demo/index.html` directly in a browser. It has drag-and-drop upload plus
-three one-click demo scenarios (Expired / Damaged / Valid) that call your local
-server. Set the **Base URL** and **x-api-key** at the top to match your `.env`.
+Open `http://127.0.0.1:8000/` (served by the app). The console takes a customer
+image URL + a query and calls the single `/dispute` endpoint, showing the
+decision, route, refund, agent flags, and the raw JSON response.
 
 ---
 
 ## 5. Run tests
 
 ```bash
-pytest tests/ -v
+venv/bin/python -m pytest -q
 ```
 
-All tests mock Gemini at the `analyze_image` boundary — **no real API calls, no
-key required**. `tests/conftest.py` pins `KAILY_API_SECRET=test-secret` for auth.
+All tests mock Gemini at the service boundary — **no real API calls, no key
+required**. `tests/conftest.py` pins `KAILY_API_SECRET=test-secret` for auth.
 
 ---
 
-## 6. Endpoint contract
-
-### `POST /api/v1/imgrecog/scan`
-
-**Headers**
-
-```
-Content-Type: application/json
-x-api-key: <KAILY_API_SECRET>
-```
-
-**Request**
-
-```json
-{
-  "image_base64": "data:image/jpeg;base64,/9j/...",
-  "order_id": "JM-29384",
-  "user_id": "u_kaily_123",
-  "scan_type": "auto"
-}
-```
-
-`scan_type`: `auto` (default) · `ocr` (bias to dates) · `damage` (bias to damage).
-`image_base64` accepts a full data URI **or** a raw base64 string (JPEG/PNG/WebP).
-
-**Response `200`**
-
-```json
-{
-  "success": true,
-  "request_id": "req_1718612345_a3f9",
-  "order_id": "JM-29384",
-  "user_id": "u_kaily_123",
-  "status": "expired",
-  "confidence": 0.96,
-  "ocr": {
-    "manufacture_date": "2024-01-15",
-    "expiry_date": "2025-05-20",
-    "batch_no": "B2401K",
-    "days_since_expiry": 28,
-    "raw_text": "MFG JAN 2024  EXP 20/05/2025  BATCH B2401K"
-  },
-  "damage": { "detected": false, "type": null, "severity": null, "description": null },
-  "action": {
-    "type": "initiate_refund",
-    "message": "Product expired 28 days ago. Refund process triggered.",
-    "refund_eligible": true,
-    "priority": "high"
-  },
-  "processed_at": "2026-06-17T10:30:00Z",
-  "model_used": "gemini-2.0-flash-001"
-}
-```
-
-**Field domains**
-
-- `status`: `expired` · `damaged` · `valid` · `unclear`
-- `damage.type`: `crushed_packaging` · `tear` · `broken_seal` · `leakage` · `dent` · `discoloration` · `mold`
-- `damage.severity`: `minor` · `moderate` · `severe`
-- `action.type`: `initiate_refund` · `initiate_exchange` · `no_action`
-- `action.priority`: `high` · `medium` · `low`
-
-**Errors**
-
-| Code | Meaning |
-|---|---|
-| `400` / `422` | Validation error (missing fields / malformed body) |
-| `401` | Invalid or missing `x-api-key` |
-| `413` | Image exceeds `MAX_IMAGE_SIZE_MB` |
-| `429` | Rate limit exceeded (100/min per IP) |
-| `504` | Gemini analysis timed out |
-
-> **Decision authority:** the model supplies the *observations* (OCR text, damage
-> type/severity); the refund/exchange *decision* and `days_since_expiry` are computed
-> deterministically in `decision_engine.py` / `ocr_parser.py`, so eligibility is
-> auditable and never hallucinated.
-
----
-
-## 7. Kaily integration
-
-- **Endpoint URL:** `POST https://<your-host>/api/v1/imgrecog/scan`
-- **Required header:** `x-api-key: <KAILY_API_SECRET>`
-- **Branch on `action.type`:**
-
-| `action.type` | Kaily should… |
-|---|---|
-| `initiate_refund` | Start the refund workflow (expired, or severe damage) |
-| `initiate_exchange` | Start the exchange workflow (minor/moderate damage) |
-| `no_action` | Take no automated action (valid, or unclear image) |
-
-Use `action.refund_eligible` and `action.priority` for queue routing/SLAs.
-
----
-
-## 7b. Claim authenticity verification (fraud scoring)
-
-A second endpoint scores whether a customer's *damage/destroyed-product* claim is
-authentic, so Kaily can auto-approve genuine refunds and route suspicious ones to
-a human.
-
-### `POST /api/v1/imgrecog/verify-claim`
-
-**Request**
-
-```json
-{
-  "image_base64": "data:image/jpeg;base64,/9j/...",
-  "user_comment": "The oil bottle was leaking when it arrived",
-  "claimed_product": "JioMart Sunflower Oil 1L",
-  "order_id": "JM-77",
-  "user_id": "u_9",
-  "reference_image_base64": "optional catalog image"
-}
-```
-
-**Response `200`**
-
-```json
-{
-  "success": true,
-  "request_id": "vfy_1781679817_kjc0",
-  "order_id": "JM-77",
-  "user_id": "u_9",
-  "authenticity_score": 0.94,
-  "decision_confidence": 0.88,
-  "verdict": "authentic",
-  "recommended_action": "auto_approve",
-  "recognition": {
-    "scene": "A leaking oil bottle on a kitchen counter",
-    "objects": ["oil bottle"],
-    "extracted_text": "JioMart Sunflower Oil 1L  MFG 02/2026  BATCH F2602"
-  },
-  "checks": {
-    "ai_generated": { "is_ai_generated": false, "ai_probability": 0.05, "source": "internal", "signals": [] },
-    "image_comment_alignment": { "score": 0.9, "aligned": true, "reason": "Leak visible" },
-    "product_match": { "matches": true, "score": 0.98, "detected_product": "...", "reason": "..." },
-    "other_flags": []
-  },
-  "agent_comment": "Human-readable analyst summary for the support agent.",
-  "processed_at": "2026-06-17T07:03:37Z",
-  "model_used": "gemini-2.5-flash"
-}
-```
-
-**What Kaily branches on** — `recommended_action`:
-
-| value | meaning |
-|---|---|
-| `auto_approve` | Genuine claim — proceed with refund/exchange |
-| `manual_review` | Send to a human (mid-confidence, or an *advisory* AI-generated flag) |
-| `reject` | Likely fraud — comment/product mismatch, or a confident specialist AI-detection |
-
-### What it returns (per claim)
-
-- **`recognition`** — image + text understanding: a one-line scene description,
-  the objects/products seen, and **OCR** (`extracted_text`) of all text on the
-  packaging/label.
-- **`checks`** — the four fraud signals:
-  1. **AI-generated image** — is the photo synthetic/edited rather than a real phone photo?
-  2. **Image ↔ comment alignment** — does the photo actually show the problem described?
-  3. **Product match** — is it the product the ticket is about?
-  4. **Other flags** — stock photo, screenshot, screen-of-a-screen, watermark, unrelated item…
-
-The final `authenticity_score` and routing are computed **deterministically** in
-`authenticity_engine.py` from those signals — not by the model — so it's auditable
-and tunable via env weights/thresholds. `ai_probability` is always
-"probability the image is AI-generated" (0 = real photo, 1 = AI), and
-`decision_confidence` (0–1) says how decisively the recommended action sits in its
-band — so Kaily can require e.g. `decision_confidence >= 0.8` before acting
-unattended.
-
-### Design choice & cost (why this approach)
-
-AI-generated-image detection is the only check a general vision model is weak at,
-so it's handled by a **pluggable detector** with two providers:
-
-| Provider (`AI_DETECTOR_PROVIDER`) | Accuracy | Cost / image | Notes |
-|---|---|---|---|
-| **`internal`** (default) | advisory | **~$0** | Free in-process EXIF/C2PA/SynthID-marker scan **+** Gemini visual heuristic. Never auto-rejects on this signal alone — routes to `manual_review`. |
-| **`sightengine`** | ~high | **~$0.01** (5 ops/call) | Paid specialist API; a confident verdict here *can* `reject`. Sends the image to a third party. |
-
-The rest of the verification (alignment, product match, reasoning) runs in the
-**same Gemini call** at **~$0.001/request** (vs Sightengine's ~$0.01 for the AI
-check alone). Specialist alternatives we evaluated and rejected for v1: **SynthID**
-(only detects Google's own AI tools), **Reality Defender** (50/mo free cap, opaque
-enterprise pricing), **Sensity** (SaaS quota, not per-request).
-
-**Recommendation:** stay on `internal` (advisory) until AI-image fraud proves
-material, then flip `AI_DETECTOR_PROVIDER=sightengine` (+ keys) — no code change.
-
-### Tunable env vars
-
-```
-AI_DETECTOR_PROVIDER=internal              # or "sightengine"
-SIGHTENGINE_API_USER=                       # only if using sightengine
-SIGHTENGINE_API_SECRET=
-AUTHENTICITY_WEIGHT_ALIGNMENT=0.5           # base-score weights (sum to 1.0)
-AUTHENTICITY_WEIGHT_PRODUCT_MATCH=0.5
-AUTHENTICITY_AI_PENALTY=0.6                 # score penalty when image looks AI-made
-AUTHENTICITY_FLAG_PENALTY=0.1               # per other_flag
-AI_DETECTION_MIN_CONFIDENCE=0.6             # min conf before AI verdict affects routing
-AUTHENTICITY_AUTO_APPROVE_THRESHOLD=0.75
-AUTHENTICITY_REVIEW_THRESHOLD=0.45
-```
-
-> **Stateless note:** duplicate/reused-image detection across tickets needs
-> persistence and is intentionally out of scope for this stateless service — add a
-> hash store (e.g. perceptual-hash + Redis) when you're ready to break statelessness.
-
----
-
-## 7c. URL-based image evaluation
-
-Use this endpoint when the caller sends image links instead of base64. It accepts
-a customer/user image URL, an official product image URL, and a query such as
-`expired product`, `damaged product`, or `valid product`. It also auto-classifies
-the submitted user image as `expired`, `damaged`, `valid`, or `unclear`.
-
-### `POST /api/v1/imgrecog/evaluate-links`
-
-**Request**
-
-```json
-{
-  "user_image_url": "https://example.com/customer-photo.jpg",
-  "product_image_url": "https://example.com/catalog-product.jpg",
-  "query": "damaged product"
-}
-```
-
-**Response `200`**
-
-```json
-{
-  "decision": {
-    "decision": "accept_claim",
-    "verdict": "Accept claim because the product appears damaged.",
-    "detail": "Authenticity, product match, product status, and query-match gates all passed.",
-    "reason_codes": ["damaged_claim_supported"]
-  },
-  "product_status": {
-    "status": "damaged",
-    "score": 91,
-    "verdict": "Product appears damaged.",
-    "detail": "Bottle cap area appears broken."
-  },
-  "authenticity": {
-    "score": 92,
-    "verdict": "Image is likely an original mobile customer photo.",
-    "detail": "Natural background and perspective; web check found 0 full match(es), 0 partial match(es), 0 domain(s)"
-  },
-  "product_match": {
-    "score": 96,
-    "verdict": "The same product and packaging are visible.",
-    "detail": "Brand, bottle shape, and label colors match."
-  },
-  "query_match": {
-    "score": 90,
-    "verdict": "Visible damage supports the query.",
-    "detail": "Bottle cap area appears broken."
-  }
-}
-```
-
-**Accuracy design**
-
-- The final `decision` is computed deterministically in code. Gemini provides
-  observations and scores; business routing uses configured gates.
-- Decision order is strict: authenticity gate, product-match gate, product-status
-  gate, then query-match gate.
-- Product status is an independent auto-check from the user image. It does not
-  depend on the query text.
-- Readable expiry labels are parsed and compared in Python after Gemini OCR, so
-  a past expiry date overrides a model status that incorrectly says `valid`.
-- Product matching uses **both images in the same Gemini call** and asks for
-  brand/logo, packaging geometry, label layout, visible OCR, SKU/variant/flavor,
-  size, seal/cap style, and category. It is intentionally conservative when SKU
-  evidence is incomplete.
-- Query matching is evidence-specific: expiry needs readable expired date or
-  strong spoilage evidence; damage needs visible physical damage; valid needs a
-  visible product with no contradictory expiry/damage evidence.
-- Authenticity combines Gemini visual authenticity, metadata/AI-detector signals,
-  and Google Vision web provenance. A confirmed public-web full match across the
-  configured domain threshold returns a very low authenticity score.
-- Valid products produce `reject_claim`. Damaged/expired products produce
-  `accept_claim` only when the customer query agrees with visible evidence.
-  Low authenticity, wrong product, unclear status, or mismatched query produces
-  `review`.
-
-**Decision gates**
-
-```bash
-GEMINI_TIMEOUT_SECONDS=45
-LINK_EVAL_MODEL_MAX_EDGE_PX=1280
-LINK_EVAL_MODEL_IMAGE_QUALITY=85
-LINK_DECISION_MIN_AUTHENTICITY_SCORE=70
-LINK_DECISION_MIN_PRODUCT_MATCH_SCORE=75
-LINK_DECISION_MIN_STATUS_SCORE=60
-LINK_DECISION_MIN_QUERY_MATCH_SCORE=60
-```
-
-The URL evaluator preserves original fetched bytes for authenticity/web
-provenance checks, but sends a resized JPEG variant to Gemini. This keeps large
-PixelBin `original` images from causing avoidable model timeouts.
-
-**URL safety controls**
-
-- Only `http` and `https` URLs are accepted.
-- Credentials in URLs are rejected.
-- Hosts resolving to localhost, private, link-local, reserved, or other
-  non-public networks are rejected before fetch.
-- Redirects are revalidated and capped.
-- Image type and decoded raster validity are checked.
-- Image size is capped by `MAX_IMAGE_SIZE_MB`.
-
-**PixelBin**
-
-PixelBin is treated as a CDN/preprocessing layer, not the detector. Configure a
-template when your PixelBin URL datasource/storage path is ready:
-
-```bash
-PIXELBIN_ENABLED=true
-PIXELBIN_URL_TEMPLATE=https://cdn.pixelbin.io/v2/<cloud>/<zone>/wrkr/t.resize(w:1280)/{url_encoded}
-PIXELBIN_ALLOW_DIRECT_FALLBACK=true
-```
-
-Supported template placeholders are `{url}`, `{url_encoded}`, `{host}`, `{path}`,
-and `{path_encoded}`.
-
----
-
-## 7d. Production hardening
+## 6. Production hardening
 
 What's already in place and what to wire up before a fully-autonomous launch.
 
 **In the app already:**
 - **Fail-fast config** — with `ENVIRONMENT=production`, the service refuses to boot
-  if `KAILY_API_SECRET`, the active provider's credentials, or (when enabled)
-  Sightengine keys are missing/placeholder. A misconfigured prod service crashes
-  loudly instead of silently serving errors.
+  if `KAILY_API_SECRET`, the active provider's credentials, `DATABASE_URL`, the
+  object store, or `REDIS_URL` are missing/placeholder. A misconfigured prod
+  service crashes loudly instead of silently serving errors.
 - **Health vs readiness** — `GET /health` is liveness (process up, restart on hang);
   `GET /ready` is readiness (config valid + Gemini client initialises, no billed
   call) — gate the load balancer on `/ready`.
@@ -475,9 +148,9 @@ What's already in place and what to wire up before a fully-autonomous launch.
 
 ---
 
-## 7d. Durable audit store + idempotency (Phase 1)
+## 7. Durable audit store + idempotency
 
-Every scan/verify decision is now **persisted and idempotent** — the minimum state
+Every dispute decision is **persisted and idempotent** — the minimum state
 needed to run autonomously.
 
 - **Audit store** — each call writes a `claim_decisions` row: who/what, the image
@@ -502,12 +175,11 @@ ALEMBIC_URL=postgresql+psycopg2://user:pass@host:5432/imgrecog alembic upgrade h
 ALEMBIC_URL=...                                                alembic downgrade base   # clean rollback
 ```
 
-New request fields (both endpoints, optional — backward-compatible):
-`idempotency_key`, `claim_id`. New env vars: see `.env.example` (`DATABASE_URL`,
-`OBJECT_STORE_PROVIDER`, `GCS_BUCKET`, `GCS_REGION`, `IMAGE_RETENTION_DAYS`,
-`SCAN_PROMPT_VERSION`, `VERIFY_PROMPT_VERSION`).
+Optional request fields: `idempotency_key`, `claim_id`. Related env vars: see
+`.env.example` (`DATABASE_URL`, `OBJECT_STORE_PROVIDER`, `GCS_BUCKET`,
+`GCS_REGION`, `IMAGE_RETENTION_DAYS`, `DISPUTE_PROMPT_VERSION`).
 
-## 7e. Reused-image fraud detection (Phase 2)
+## 8. Reused-image fraud detection
 
 The most common refund-fraud vector is the **same photo submitted across many
 orders/accounts**. The service now catches it.
@@ -532,7 +204,7 @@ orders/accounts**. The service now catches it.
 
 ---
 
-## 7f. Grocery dispute verification (single endpoint)
+## 9. The endpoint — Grocery dispute verification
 
 One endpoint that resolves a grocery delivery dispute end-to-end: it takes the
 customer images + ticket text + shipment data (the caller — Kaily — supplies the
@@ -651,7 +323,7 @@ build. To get the *model-level* number, add real labelled photos and run `--mode
 
 ---
 
-## 8. Deploy to Boltic (serverless)
+## 10. Deploy to Boltic (serverless)
 
 1. In the Boltic dashboard, set **all** env vars from `.env.example`
    (`GOOGLE_API_KEY`, `KAILY_API_SECRET`, `GEMINI_MODEL`, …).
@@ -676,7 +348,7 @@ build. To get the *model-level* number, add real labelled photos and run `--mode
 
 ---
 
-## 9. Swapping the Gemini model
+## 11. Swapping the Gemini model
 
 Change one env var — no code change:
 
@@ -695,21 +367,24 @@ Restart the server; the new model id appears in startup logs and in
 imgrecog-kaily/
 ├── app/
 │   ├── main.py                    # FastAPI app + lifespan + Boltic handler export
-│   ├── routers/scan.py            # POST /api/v1/imgrecog/scan
-│   ├── routers/verify.py          # POST /api/v1/imgrecog/verify-claim
-│   ├── routers/link_evaluation.py # POST /api/v1/imgrecog/evaluate-links
+│   ├── routers/dispute.py         # POST /api/v1/imgrecog/dispute  (the one endpoint)
 │   ├── services/
-│   │   ├── gemini_service.py      # Gemini call (SDK, async + timeout)
-│   │   ├── link_evaluation_service.py # URL pair analysis + score shaping
+│   │   ├── dispute_service.py     # One multi-image Gemini observation call
+│   │   ├── dispute_engine.py      # Deterministic per-category decision + refund + gates
+│   │   ├── category_classifier.py # Fallback-chain category resolution
+│   │   ├── gemini_service.py      # Gemini client (async + timeout + concurrency cap)
 │   │   ├── image_url_fetcher.py   # SSRF-safe URL fetch + PixelBin templating
-│   │   ├── ocr_parser.py          # Date normalisation + expiry maths
-│   │   ├── damage_analyzer.py     # Damage taxonomy validation + severity score
-│   │   └── decision_engine.py     # Deterministic refund/exchange decision
-│   ├── models/                 # Pydantic v2 request/response schemas
+│   │   ├── ocr_parser.py          # Date/MRP/shelf-life maths
+│   │   ├── damage_analyzer.py     # Damage taxonomy validation
+│   │   ├── dedup_service.py       # Reused-image fraud (Redis pHash)
+│   │   └── audit_service.py       # Idempotency + durable audit + safe downgrade
+│   ├── models/                 # Pydantic v2 dispute request/response schemas
 │   ├── middleware/             # auth · error handlers · rate limit
 │   ├── config/settings.py      # Pydantic BaseSettings (all env vars)
+│   ├── db/ · storage/          # Postgres audit repo · GCS/local/memory object store
 │   └── utils/                  # image · date · structured logger
-├── demo/index.html             # Standalone browser demo (zero deps)
+├── eval_harness/               # Accuracy eval (engine + e2e modes) + seed dataset
+├── demo/index.html             # Standalone browser demo for /dispute
 ├── tests/                      # pytest suite (Gemini mocked) + fixtures
 ├── requirements.txt / -dev.txt
 └── .env.example

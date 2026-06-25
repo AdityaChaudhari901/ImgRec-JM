@@ -1,5 +1,14 @@
 # Kaily ImgRec Application Code Guide
 
+> ⚠️ **Partially superseded (2026-06-25).** The service was consolidated to a
+> **single endpoint**, `POST /api/v1/imgrecog/dispute`. The `/scan`,
+> `/verify-claim`, and `/evaluate-links` endpoints — and their engines
+> (`decision_engine`, `authenticity_engine`, `link_evaluation_service`,
+> `ai_image_detector`, `web_provenance`) — were **removed**. Sections below that
+> describe those endpoints are historical. For the current system, see the
+> **README** (§9, the dispute endpoint) and the **"Request Flow 3: Grocery Dispute
+> Verification"** section in this guide, which is current.
+
 This guide explains the application from the live source code. Read it when you
 want to understand how the API starts, how each endpoint works, which files own
 which behavior, and where to make changes safely.
