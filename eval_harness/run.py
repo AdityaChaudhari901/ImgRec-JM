@@ -29,7 +29,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="engine = labelled observations; e2e = real Gemini over images")
     parser.add_argument("--threshold", type=float, default=0.0,
                         help="fail (exit 1) if decision accuracy is below this (0..1)")
+    parser.add_argument("--model", default=None,
+                        help="override GEMINI_MODEL for this run (e2e A/B testing, "
+                             "e.g. --model gemini-2.5-pro vs gemini-2.5-flash)")
     args = parser.parse_args(argv)
+
+    # Model override only affects e2e mode (engine mode never calls the model).
+    if args.model:
+        from app.config.settings import settings
+        settings.gemini_model = args.model
 
     cases = load_manifest(args.manifest)
     if args.mode == "e2e":
@@ -37,8 +45,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         preds = run_dataset(cases)
 
+    model_note = f", model={args.model}" if args.model else ""
     metrics = compute_metrics(preds)
-    print(format_report(metrics, title=f"Dispute Eval Report ({args.mode})"))
+    print(format_report(metrics, title=f"Dispute Eval Report ({args.mode}{model_note})"))
 
     if metrics.decision_accuracy < args.threshold:
         print(f"\nFAIL: decision accuracy {metrics.decision_accuracy:.2%} "

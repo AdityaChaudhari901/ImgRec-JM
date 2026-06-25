@@ -96,8 +96,11 @@ class Settings(BaseSettings):
     # a shadow/assist period without a redeploy.
     dispute_assist_mode: bool = False
     # Comma-separated categories allowed to auto-act. Others are recommend-only
-    # until they clear the accuracy bar (progressive rollout).
-    dispute_autonomous_categories: str = "mrp_abuse,expiry,wrong_product,damaged"
+    # until they clear the accuracy bar (progressive rollout). mrp_abuse is
+    # deliberately NOT autonomous by default: it depends on OCR'ing a printed MRP,
+    # where a misread (e.g. a per-unit price) could cause a wrong auto-refund —
+    # add it only after it clears the e2e accuracy eval on real photos.
+    dispute_autonomous_categories: str = "expiry,wrong_product,damaged"
     # Dairy: approve near-expiry when remaining shelf life is below this percent.
     dairy_min_shelf_pct: float = 30
     # Non-FNV: approve when days until expiry is at or below this (Legal Metrology).

@@ -40,6 +40,16 @@ def test_cli_threshold_failure_exits_nonzero(tmp_path):
     assert main(["--manifest", str(manifest), "--threshold", "0.95"]) == 1
 
 
+def test_cli_model_override_sets_gemini_model():
+    from app.config.settings import settings
+    original = settings.gemini_model
+    try:
+        main(["--mode", "engine", "--model", "gemini-2.5-pro", "--threshold", "0"])
+        assert settings.gemini_model == "gemini-2.5-pro"
+    finally:
+        settings.gemini_model = original
+
+
 def test_e2e_runner_wires_gemini_observations():
     case = EvalCase(
         id="e1", category="mrp_abuse", expected_decision="approve",
