@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # uses its credits, auth via Application Default Credentials). When False,
     # use the AI Studio API key (google_api_key) and its prepay billing.
     use_vertex: bool = False
+    gemini_vertex_fallback_enabled: bool = True
     gemini_model: str = "gemini-2.0-flash-001"
     gemini_timeout_seconds: int = 45
     max_image_size_mb: int = 10

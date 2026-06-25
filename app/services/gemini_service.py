@@ -13,9 +13,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Lazily-created singleton client. Built on first use so importing this module
+# Lazily-created singleton clients. Built on first use so importing this module
 # (e.g. during tests) never needs credentials or network.
-_client: genai.Client | None = None
+_clients: dict[str, genai.Client] = {}
 
 
 def build_generation_config(max_output_tokens: int = 2048) -> types.GenerateContentConfig:
@@ -104,23 +104,82 @@ def build_claim_generation_config(
     return types.GenerateContentConfig(**kwargs)
 
 
-def get_client() -> genai.Client:
+def get_client(provider: str | None = None) -> genai.Client:
     """Return a cached google-genai client for the configured provider.
 
     - Vertex AI  -> bills the GCP project, auth via Application Default Creds.
     - AI Studio  -> uses the GOOGLE_API_KEY and its prepay billing.
     """
-    global _client
-    if _client is None:
-        if settings.use_vertex:
-            _client = genai.Client(
+    selected = provider or ("vertex" if settings.use_vertex else "api_key")
+    if selected not in _clients:
+        if selected == "vertex":
+            _clients[selected] = genai.Client(
                 vertexai=True,
                 project=settings.vertex_project_id,
                 location=settings.vertex_region,
             )
         else:
-            _client = genai.Client(api_key=settings.google_api_key)
-    return _client
+            _clients[selected] = genai.Client(api_key=settings.google_api_key)
+    return _clients[selected]
+
+
+async def generate_content_with_fallback(
+    *,
+    model: str,
+    contents,
+    config: types.GenerateContentConfig,
+):
+    """Generate content with the configured Gemini provider.
+
+    If AI Studio is the primary provider and it returns a quota/prepay 429,
+    retry through Vertex AI when the deployment has a Vertex project configured.
+    This lets Boltic use GCP trial credits even if the API-key project has no
+    prepay balance.
+    """
+    primary = "vertex" if settings.use_vertex else "api_key"
+    try:
+        return await get_client(primary).aio.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if not _should_retry_with_vertex(exc, primary):
+            raise
+        logger.warning(
+            "gemini_retrying_with_vertex",
+            primary_provider=primary,
+            code=getattr(exc, "code", None),
+        )
+        try:
+            return await get_client("vertex").aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as fallback_exc:  # noqa: BLE001
+            logger.error(
+                "gemini_vertex_fallback_failed",
+                code=getattr(fallback_exc, "code", None),
+                error=str(fallback_exc),
+            )
+            raise
+
+
+def _should_retry_with_vertex(exc: Exception, primary: str) -> bool:
+    if primary == "vertex" or not settings.gemini_vertex_fallback_enabled:
+        return False
+    if settings.vertex_project_id in {"", "missing-project-id"}:
+        return False
+    code = getattr(exc, "code", None)
+    if code != 429:
+        return False
+    text = str(exc).lower()
+    return (
+        "resource_exhausted" in text
+        or "prepayment credits are depleted" in text
+        or "quota" in text
+    )
 
 
 SYSTEM_PROMPT = """
@@ -222,13 +281,12 @@ async def analyze_image(image_base64: str, scan_type: str = "auto") -> dict:
     today = date.today().isoformat()
     prompt = SYSTEM_PROMPT.format(today=today) + _SCAN_HINTS.get(scan_type, "")
 
-    client = get_client()
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
     config = build_generation_config()
 
     try:
         response = await asyncio.wait_for(
-            client.aio.models.generate_content(
+            generate_content_with_fallback(
                 model=settings.gemini_model,
                 contents=[image_part, prompt],
                 config=config,

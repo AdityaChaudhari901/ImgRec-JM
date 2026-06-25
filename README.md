@@ -44,6 +44,7 @@ Then fill in `.env`:
 | Variable | Purpose |
 |---|---|
 | `USE_VERTEX` | `true` = call Gemini via **Vertex AI** (bills GCP project, auth via ADC); `false` = use the AI Studio `GOOGLE_API_KEY` (its own prepay billing) |
+| `GEMINI_VERTEX_FALLBACK_ENABLED` | When `USE_VERTEX=false`, retry via Vertex if AI Studio returns depleted-credit/quota errors (default `true`) |
 | `GOOGLE_API_KEY` | Google AI Studio API key (used only when `USE_VERTEX=false`) |
 | `KAILY_API_SECRET` | Shared secret Kaily sends as `x-api-key` |
 | `GEMINI_MODEL` | Model id (default `gemini-2.0-flash-001`) |
@@ -550,6 +551,9 @@ orders/accounts**. The service now catches it.
 > `WEB_PROVENANCE_ENABLED=false` so a disabled Cloud Vision API or missing Vertex
 > IAM role cannot break the demo. Keep `GOOGLE_API_KEY` as a Boltic secret/env
 > var; do not commit it to `boltic.yaml`.
+> If AI Studio credits are depleted, `GEMINI_VERTEX_FALLBACK_ENABLED=true` retries
+> Gemini calls through Vertex as long as the Boltic runtime service account has
+> `roles/aiplatform.user` on `VERTEX_PROJECT_ID`.
 
 ---
 

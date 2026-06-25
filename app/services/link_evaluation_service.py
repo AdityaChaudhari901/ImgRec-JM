@@ -16,7 +16,7 @@ from app.models.link_evaluation import (
     ProductStatusCheck,
 )
 from app.models.verify_response import AIGeneratedCheck
-from app.services.gemini_service import get_client
+from app.services.gemini_service import generate_content_with_fallback
 from app.services.image_url_fetcher import FetchedImage
 from app.services.web_provenance import WebProvenanceResult
 from app.utils.date_utils import is_expired, parse_indian_date
@@ -220,7 +220,6 @@ async def analyze_linked_images(
     query: str,
 ) -> dict:
     """Call Gemini with user + product images and return structured observations."""
-    client = get_client()
     config = _generation_config()
     prompt = (
         LINK_EVALUATION_PROMPT
@@ -241,7 +240,7 @@ async def analyze_linked_images(
 
     try:
         response = await asyncio.wait_for(
-            client.aio.models.generate_content(
+            generate_content_with_fallback(
                 model=settings.gemini_model,
                 contents=contents,
                 config=config,

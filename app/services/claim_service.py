@@ -15,7 +15,10 @@ from typing import Optional
 from google.genai import types
 
 from app.config.settings import settings
-from app.services.gemini_service import build_claim_generation_config, get_client
+from app.services.gemini_service import (
+    build_claim_generation_config,
+    generate_content_with_fallback,
+)
 from app.utils.image_utils import extract_base64_data
 from app.utils.logger import get_logger
 
@@ -107,12 +110,11 @@ async def analyze_claim(
             pass
     contents.append(prompt)
 
-    client = get_client()
     config = build_claim_generation_config()
 
     try:
         response = await asyncio.wait_for(
-            client.aio.models.generate_content(
+            generate_content_with_fallback(
                 model=settings.gemini_model, contents=contents, config=config
             ),
             timeout=settings.gemini_timeout_seconds,
