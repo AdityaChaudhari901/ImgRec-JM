@@ -15,6 +15,9 @@ VALID_TYPES = {
     "dent",
     "discoloration",
     "mold",
+    "tamper",
+    "resealed",
+    "missing_component",
 }
 
 VALID_SEVERITIES = {"minor", "moderate", "severe"}
