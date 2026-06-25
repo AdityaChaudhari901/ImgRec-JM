@@ -532,6 +532,95 @@ orders/accounts**. The service now catches it.
 
 ---
 
+## 7f. Grocery dispute verification (single endpoint)
+
+One endpoint that resolves a grocery delivery dispute end-to-end: it takes the
+customer images + ticket text + shipment data (the caller — Kaily — supplies the
+Shipment Details API / Kapture fields) and returns a deterministic
+approve / reject / route-to-agent decision with a refund amount and routing flags.
+
+### `POST /api/v1/imgrecog/dispute`
+
+**Request**
+
+```json
+{
+  "images": ["data:image/jpeg;base64,/9j/..."],
+  "dispute_category": "mrp_abuse",
+  "is_rebuttal": false,
+  "ticket": { "title": "...", "description": "...", "notes": "...", "disposition_code": "PRICE_DISPUTE" },
+  "shipment": {
+    "order_tracking_id": "JM-29384", "product_name": "Amul Gold Milk 500ml",
+    "product_type": "dairy", "mrp": 33.0, "selling_price": 31.0,
+    "invoice_amount": 62.0, "quantity": 2, "seller_type": "1P"
+  }
+}
+```
+
+`dispute_category` is optional — if omitted, it's inferred from the ticket
+description → notes → disposition code, else the dispute is escalated with
+`insufficient_data`. `product_type`: `fnv | non_fnv | dairy`. `seller_type`:
+`1P | 3P`. `images` accepts 1..`DISPUTE_MAX_IMAGES` data URIs or raw base64.
+
+**Response `200`**
+
+```json
+{
+  "category": "mrp_abuse", "category_source": "provided",
+  "decision": "approve", "route": "auto", "agent_flags": [],
+  "refund": { "eligible": true, "amount": 4.0, "type": "price_difference",
+              "assign_to_mpt": false, "seller_debit": false },
+  "recommendation": "Approve ₹4 price-difference refund (1P overcharge).",
+  "confidence": 0.9, "observations": { "...": "..." }
+}
+```
+
+### Categories & rules
+
+| Category | Approve when | Reject when |
+|---|---|---|
+| `wrong_product` | image ≠ ordered product | matches order |
+| `poor_quality` | visual defect supports claim | looks normal (*internal defect → agent*) |
+| `damaged` | seal/leak/tear/crush/tamper visible | packaging intact |
+| `expiry` (non-FNV) | ≤ `NON_FNV_NEAR_EXPIRY_DAYS` (45) to expiry | > 45 days |
+| `expiry` (dairy) | shelf-left < `DAIRY_MIN_SHELF_PCT` (30%) | ≥ 30% |
+| `expiry` (FNV) | judged by `poor_quality` (variable shelf life) | |
+| `smell` | detailed report + visible spoilage proxy | insufficient evidence |
+| `mrp_abuse` | printed MRP **<** invoice MRP (overcharge) | printed ≥ invoice |
+| `quantity_mismatch` | counted units < ordered (confident) | counts match |
+
+**MRP refund:** 1P → price difference `(charged − printed MRP) × qty`; 3P → full
+selling price + `assign_to_mpt`/`seller_debit` flags (Kaily/Kapture executes the
+seller debit; ImgRec only emits the flags).
+
+**Always routed to an agent** (with the AI recommendation attached): counterfeit,
+post-rejection rebuttal (`is_rebuttal: true`), any approved refund ≥
+`REFUND_AUTO_APPROVE_MAX` (₹500), reused-image fraud, AI-generated image, and
+`insufficient_data`. The decision is computed deterministically in
+`dispute_engine.py` — Gemini only supplies observations — so every refund is
+auditable, idempotent, and persisted (with safe downgrade-to-agent on audit
+failure), exactly like the other endpoints.
+
+### Tunable env vars
+
+```bash
+REFUND_AUTO_APPROVE_MAX=500                 # >= this (₹) -> agent approval
+DISPUTE_ASSIST_MODE=false                   # true = recommend-only (no auto-act)
+DISPUTE_AUTONOMOUS_CATEGORIES=mrp_abuse,expiry,wrong_product,damaged
+DAIRY_MIN_SHELF_PCT=30
+NON_FNV_NEAR_EXPIRY_DAYS=45
+DISPUTE_MAX_IMAGES=5
+GEMINI_MAX_CONCURRENCY=8                     # per-instance model-call backpressure
+DISPUTE_PROMPT_VERSION=dispute-v1
+```
+
+`DISPUTE_ASSIST_MODE` and `DISPUTE_AUTONOMOUS_CATEGORIES` enable a progressive
+rollout — start subjective categories (poor_quality, smell, quantity) in
+recommend-only and promote them to autonomous once they clear the accuracy bar,
+without a redeploy.
+
+---
+
 ## 8. Deploy to Boltic (serverless)
 
 1. In the Boltic dashboard, set **all** env vars from `.env.example`

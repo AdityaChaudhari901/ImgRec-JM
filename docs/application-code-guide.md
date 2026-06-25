@@ -230,6 +230,57 @@ not auto-reject a customer by itself. Hard rejections come from stronger signals
 Sightengine, cross-claim duplicate image reuse, or public web reuse across the
 configured domain threshold.
 
+## Request Flow 3: Grocery Dispute Verification
+
+Entrypoint: `app/routers/dispute.py`
+
+Endpoint:
+
+```http
+POST /api/v1/imgrecog/dispute
+x-api-key: <KAILY_API_SECRET>
+Content-Type: application/json
+```
+
+Request model: `app/models/dispute_request.py` (`DisputeRequest` with `images`,
+optional `dispute_category`, `is_rebuttal`, `ticket`, and `shipment`). The caller
+supplies the Shipment Details API + Kapture fields; ImgRec does not call those
+APIs.
+
+Execution steps:
+
+1. `verify_api_key` + the `100/minute` limiter.
+2. `validate_image_size` on the primary image; `compute_image_phash` for dedup.
+3. `build_idempotency_key` + `find_replay("dispute", key)` — a repeat returns the
+   prior decision verbatim.
+4. `classify_category` resolves the category via the fallback chain
+   (`dispute_category` → description → notes → disposition → `insufficient_data`).
+   If unresolved, the dispute is escalated to an agent with **no model call**.
+5. `analyze_dispute` runs ONE Gemini observation call over all images (OCR,
+   product match, damage, quality, spoilage, unit count, counterfeit/AI hints).
+6. `find_duplicates` adds the reused-image fraud signal.
+7. `dispute_engine.decide` computes the deterministic decision + refund, then
+   applies the escalation gates (counterfeit, rebuttal, refund ceiling, fraud).
+8. The router maps assist-mode / non-autonomous categories to `route="agent"`.
+9. `persist_decision` writes the audit row (safe downgrade-to-agent on failure);
+   `register_image` records the hash for future dedup.
+
+Decision authority lives in `app/services/dispute_engine.py`. The model only
+observes; the engine makes every approve/reject/refund call, so eligibility is
+auditable and tunable via env (`REFUND_AUTO_APPROVE_MAX`, `DAIRY_MIN_SHELF_PCT`,
+`NON_FNV_NEAR_EXPIRY_DAYS`, `DISPUTE_AUTONOMOUS_CATEGORIES`, `DISPUTE_ASSIST_MODE`).
+
+New files for this flow:
+
+| File | Purpose |
+| --- | --- |
+| `app/routers/dispute.py` | Dispute endpoint orchestration. |
+| `app/models/dispute_request.py` | `DisputeRequest`, `Ticket`, `Shipment`. |
+| `app/models/dispute_response.py` | `DisputeResponse`, `RefundResult`. |
+| `app/services/dispute_service.py` | One multi-image Gemini observation call. |
+| `app/services/dispute_engine.py` | Deterministic per-category decision + refund + gates. |
+| `app/services/category_classifier.py` | Fallback-chain category resolution. |
+
 ## Common API Infrastructure
 
 `app/main.py`
