@@ -105,6 +105,65 @@ def build_claim_generation_config(
     return types.GenerateContentConfig(**kwargs)
 
 
+def build_dispute_generation_config(max_output_tokens: int = 2048) -> types.GenerateContentConfig:
+    """JSON-mode config pinning the dispute observation schema."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "recognition": {"type": "object", "properties": {
+                "scene": {"type": "string"},
+                "objects": {"type": "array", "items": {"type": "string"}},
+            }},
+            "ocr": {"type": "object", "properties": {
+                "raw_text": {"type": "string"},
+                "printed_mrp_values": {"type": "array", "items": {"type": "number"}},
+                "manufacture_date": {"type": "string"},
+                "expiry_date": {"type": "string"},
+                "batch_no": {"type": "string"},
+            }},
+            "product_match": {"type": "object", "properties": {
+                "detected_product": {"type": "string"},
+                "matches": {"type": "boolean"},
+                "score": {"type": "number"},
+                "reason": {"type": "string"},
+            }},
+            "damage": {"type": "object", "properties": {
+                "detected": {"type": "boolean"},
+                "type": {"type": "string"},
+                "severity": {"type": "string"},
+                "description": {"type": "string"},
+            }},
+            "quality": {"type": "object", "properties": {
+                "poor_quality": {"type": "boolean"},
+                "indicators": {"type": "array", "items": {"type": "string"}},
+                "supports_claim": {"type": "boolean"},
+                "internal_defect": {"type": "boolean"},
+            }},
+            "spoilage": {"type": "object", "properties": {
+                "mold_or_visible_spoilage": {"type": "boolean"},
+            }},
+            "count": {"type": "object", "properties": {
+                "counted_units": {"type": "integer"},
+                "confidence": {"type": "number"},
+            }},
+            "counterfeit_suspected": {"type": "boolean"},
+            "ai_generated": {"type": "object", "properties": {
+                "ai_probability": {"type": "number"},
+                "signals": {"type": "array", "items": {"type": "string"}},
+            }},
+            "summary": {"type": "string"},
+        },
+        "required": ["ocr", "ai_generated", "summary"],
+    }
+    kwargs = dict(temperature=0.1, max_output_tokens=max_output_tokens,
+                  response_mime_type="application/json", response_schema=schema)
+    try:
+        kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+    except Exception:  # noqa: BLE001
+        pass
+    return types.GenerateContentConfig(**kwargs)
+
+
 def get_client(provider: str | None = None) -> genai.Client:
     """Return a cached google-genai client for the configured provider.
 
