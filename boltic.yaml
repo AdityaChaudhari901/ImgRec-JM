@@ -65,10 +65,10 @@ serverlessConfig:
         GEMINI_MODEL: gemini-2.5-flash
         LOG_LEVEL: info
         PORT: "8080"
-        USE_VERTEX: "true"
+        USE_VERTEX: "false"
         VERTEX_PROJECT_ID: alien-slice-499511-f8
         VERTEX_REGION: us-east5
-        WEB_PROVENANCE_ENABLED: "true"
+        WEB_PROVENANCE_ENABLED: "false"
     PortMap:
         - Protocol: https
           Port: 8080

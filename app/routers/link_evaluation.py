@@ -69,6 +69,14 @@ async def evaluate_links(
     except _UPSTREAM_API_ERROR as exc:  # type: ignore[misc]
         _cancel_pending(web_task, ai_task)
         code = getattr(exc, "code", None)
+        if code in (401, 403):
+            logger.error("link_evaluation_provider_auth_failed", code=code, error=str(exc))
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Image analysis provider is not configured for this deployment"
+                ),
+            )
         if code in (429, 503):
             logger.error("link_evaluation_quota_exhausted", code=code)
             raise HTTPException(
@@ -76,7 +84,10 @@ async def evaluate_links(
                 detail="Image analysis temporarily unavailable (upstream quota/overload)",
             )
         logger.error("link_evaluation_upstream_error", code=code, error=str(exc))
-        raise HTTPException(status_code=502, detail="Upstream image analysis error")
+        raise HTTPException(
+            status_code=503,
+            detail="Image analysis temporarily unavailable",
+        )
     except Exception as exc:  # noqa: BLE001
         _cancel_pending(web_task, ai_task)
         logger.error("link_evaluation_failed", error=str(exc))

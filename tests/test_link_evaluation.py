@@ -3,6 +3,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 import pytest
+from google.genai import errors as genai_errors
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
@@ -135,6 +136,45 @@ async def test_evaluate_links_rejects_private_url_before_network():
 
     assert response.status_code == 422
     assert "non-public" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_links_maps_provider_auth_error_to_json_503():
+    user = _fetched("https://cdn.example.com/user.png", "red")
+    product = _fetched("https://cdn.example.com/product.png", "blue")
+
+    async def fake_download(url, role):
+        return user if role == "user image" else product
+
+    api_error = genai_errors.APIError(
+        403,
+        {"error": {"message": "permission denied"}},
+    )
+
+    with (
+        patch("app.routers.link_evaluation.download_image_url", new=fake_download),
+        patch("app.routers.link_evaluation.analyze_linked_images", side_effect=api_error),
+        patch(
+            "app.routers.link_evaluation.detect_web_provenance",
+            return_value=WebProvenanceResult(checked=False),
+        ),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.post(
+                "/api/v1/imgrecog/evaluate-links",
+                headers=HEADERS,
+                json={
+                    "user_image_url": "https://cdn.example.com/user.png",
+                    "product_image_url": "https://cdn.example.com/product.png",
+                    "query": "damaged product",
+                },
+            )
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "detail": "Image analysis provider is not configured for this deployment"
+    }
 
 
 def test_web_download_match_zeroes_authenticity_score():

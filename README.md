@@ -545,6 +545,11 @@ orders/accounts**. The service now catches it.
 > `GOOGLE_APPLICATION_CREDENTIALS` to a mounted key file, or use the platform's
 > workload identity). Alternatively run with `USE_VERTEX=false` and a
 > `GOOGLE_API_KEY` — no ADC needed.
+>
+> The demo Boltic config uses `USE_VERTEX=false` and
+> `WEB_PROVENANCE_ENABLED=false` so a disabled Cloud Vision API or missing Vertex
+> IAM role cannot break the demo. Keep `GOOGLE_API_KEY` as a Boltic secret/env
+> var; do not commit it to `boltic.yaml`.
 
 ---
 

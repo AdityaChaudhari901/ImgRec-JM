@@ -39,6 +39,9 @@ async def test_demo_focuses_on_product_status_without_visible_identity_fields():
     assert "Final decision" in html
     assert "Decision reasons" in html
     assert "Raw JSON response" in html
+    assert "readResponsePayload" in html
+    assert "summarizeHttpText" in html
+    assert "Server returned malformed JSON response" in html
     assert 'id="rawPanel"' in html
     assert 'id="copyJson"' in html
     assert 'id="expandJson"' in html
