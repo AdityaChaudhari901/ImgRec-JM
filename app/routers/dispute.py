@@ -37,8 +37,10 @@ async def dispute(request: Request, body: DisputeRequest) -> DisputeResponse:
     start = time.time()
     primary_image = body.images[0]
 
+    # Size-check every image (not just the primary) before any reach Gemini.
     try:
-        validate_image_size(primary_image)
+        for img in body.images:
+            validate_image_size(img)
     except ValueError as exc:
         raise HTTPException(status_code=413, detail=str(exc))
 
