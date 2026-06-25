@@ -18,6 +18,18 @@ logger = get_logger(__name__)
 # (e.g. during tests) never needs credentials or network.
 _clients: dict[str, genai.Client] = {}
 
+# Per-instance backpressure: cap concurrent model calls so a traffic spike can't
+# overrun the Vertex/AI-Studio quota or exhaust worker tasks. Lazily created so
+# import stays side-effect-free.
+_gemini_semaphore: "asyncio.Semaphore | None" = None
+
+
+def _get_gemini_semaphore() -> asyncio.Semaphore:
+    global _gemini_semaphore
+    if _gemini_semaphore is None:
+        _gemini_semaphore = asyncio.Semaphore(settings.gemini_max_concurrency)
+    return _gemini_semaphore
+
 
 def build_generation_config(max_output_tokens: int = 2048) -> types.GenerateContentConfig:
     """Shared JSON-mode generation config.
@@ -198,33 +210,34 @@ async def generate_content_with_fallback(
     prepay balance.
     """
     primary = "vertex" if settings.use_vertex else "api_key"
-    try:
-        return await get_client(primary).aio.models.generate_content(
-            model=model,
-            contents=contents,
-            config=config,
-        )
-    except Exception as exc:  # noqa: BLE001
-        if not _should_retry_with_vertex(exc, primary):
-            raise
-        logger.warning(
-            "gemini_retrying_with_vertex",
-            primary_provider=primary,
-            code=getattr(exc, "code", None),
-        )
+    async with _get_gemini_semaphore():
         try:
-            return await get_client("vertex").aio.models.generate_content(
+            return await get_client(primary).aio.models.generate_content(
                 model=model,
                 contents=contents,
                 config=config,
             )
-        except Exception as fallback_exc:  # noqa: BLE001
-            logger.error(
-                "gemini_vertex_fallback_failed",
-                code=getattr(fallback_exc, "code", None),
-                error=str(fallback_exc),
+        except Exception as exc:  # noqa: BLE001
+            if not _should_retry_with_vertex(exc, primary):
+                raise
+            logger.warning(
+                "gemini_retrying_with_vertex",
+                primary_provider=primary,
+                code=getattr(exc, "code", None),
             )
-            raise
+            try:
+                return await get_client("vertex").aio.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+            except Exception as fallback_exc:  # noqa: BLE001
+                logger.error(
+                    "gemini_vertex_fallback_failed",
+                    code=getattr(fallback_exc, "code", None),
+                    error=str(fallback_exc),
+                )
+                raise
 
 
 def _should_retry_with_vertex(exc: Exception, primary: str) -> bool:
