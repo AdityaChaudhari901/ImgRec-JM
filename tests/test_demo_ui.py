@@ -30,13 +30,16 @@ async def test_demo_targets_the_single_dispute_endpoint():
     assert "categoryFromQuery" in html
     # Core console structure preserved.
     assert 'id="queryText"' in html
-    assert 'id="userImageUrl"' in html
     assert 'id="scanBtn"' in html
     assert 'id="rawPanel"' in html
     assert 'id="copyJson"' in html
     assert 'id="detailsPanel"' in html
     assert "readResponsePayload" in html
-    # No file-upload / drag-drop, no leftover identity fields.
-    assert 'type="file"' not in html
+    # Multiple-image input: a multi-file upload AND a multi-URL field.
+    assert 'id="imageFiles"' in html
+    assert "multiple" in html
+    assert 'id="imageUrls"' in html
+    assert "readFilesAsDataURIs" in html
+    # No leftover single-image identity fields.
     assert 'id="orderId"' not in html
     assert 'id="userId"' not in html

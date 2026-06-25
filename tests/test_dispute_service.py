@@ -25,6 +25,24 @@ def test_analyze_dispute_parses_json():
     assert out["product_match"]["matches"] is False
 
 
+def test_analyze_dispute_sends_all_images_capped(monkeypatch):
+    from app.config.settings import settings
+    monkeypatch.setattr(settings, "dispute_max_images", 2)
+    captured = {}
+
+    async def fake_gen(**kwargs):
+        captured["contents"] = kwargs["contents"]
+        return _Resp(json.dumps({"ocr": {}, "ai_generated": {}, "summary": "ok"}))
+
+    imgs = ["data:image/jpeg;base64,AAAA"] * 5  # 5 supplied, cap is 2
+    with patch("app.services.dispute_service.generate_content_with_fallback", side_effect=fake_gen):
+        asyncio.get_event_loop().run_until_complete(
+            analyze_dispute(imgs, "damaged", "Product", "leaking")
+        )
+    # contents = capped image parts (2) + 1 prompt string
+    assert len(captured["contents"]) == 3
+
+
 def test_analyze_dispute_empty_text_raises():
     async def fake_gen(**kwargs):
         return _Resp("")

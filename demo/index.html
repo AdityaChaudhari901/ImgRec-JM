@@ -407,12 +407,12 @@
 	          </div>
 	          <div class="field-grid">
 	            <div class="field">
-	              <label class="fl" for="userImageUrl">User image URL</label>
-	              <input id="userImageUrl" type="url" placeholder="https://..." autocomplete="off" />
+	              <label class="fl" for="imageFiles">Upload images (one or more)</label>
+	              <input id="imageFiles" type="file" accept="image/*" multiple />
 	            </div>
 	            <div class="field">
-	              <label class="fl" for="productImageUrl">Product image URL</label>
-	              <input id="productImageUrl" type="url" placeholder="https://..." autocomplete="off" />
+	              <label class="fl" for="imageUrls">…or image URLs (one per line)</label>
+	              <textarea id="imageUrls" placeholder="https://...&#10;https://..."></textarea>
 	            </div>
 	          </div>
 	        </div>
@@ -458,8 +458,17 @@
 
 	  const scanBtn=document.getElementById("scanBtn");
 	  const queryText=document.getElementById("queryText");
-	  const userImageUrl=document.getElementById("userImageUrl");
-	  const productImageUrl=document.getElementById("productImageUrl");
+	  const imageFiles=document.getElementById("imageFiles");
+	  const imageUrls=document.getElementById("imageUrls");
+
+	  function readFilesAsDataURIs(fileList){
+	    return Promise.all(Array.from(fileList).map(f=>new Promise((res,rej)=>{
+	      const r=new FileReader();
+	      r.onload=()=>res(r.result);   // "data:image/...;base64,...."
+	      r.onerror=rej;
+	      r.readAsDataURL(f);
+	    })));
+	  }
 	  const rawPanel=document.getElementById("rawPanel");
 	  const copyJson=document.getElementById("copyJson");
 	  const expandJson=document.getElementById("expandJson");
@@ -576,20 +585,23 @@
   });
 
   scanBtn.addEventListener("click",async()=>{
-    const userUrl=userImageUrl.value.trim();
-    const productUrl=productImageUrl.value.trim();
     const query=queryText.value.trim();
+    const urls=imageUrls.value.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
     const base=API_BASE_URL.replace(/\/$/,"");
     const status=document.getElementById("statusLine");
     const jsonEl=document.getElementById("json");
     const summary=document.getElementById("summary");
     status.classList.remove("err");
-    if(!userUrl||!query){
+    let base64Images=[];
+    try{ base64Images=await readFilesAsDataURIs(imageFiles.files); }
+    catch(_){ base64Images=[]; }
+    const totalImages=base64Images.length+urls.length;
+    if(!totalImages||!query){
       status.classList.add("err");
-      status.textContent="Enter a customer image URL and a query.";
+      status.textContent="Add at least one image (upload or URL) and a query.";
       return;
     }
-    status.innerHTML=`<span class="spin"></span>Scanning…`;
+    status.innerHTML=`<span class="spin"></span>Scanning ${totalImages} image${totalImages>1?"s":""}…`;
     scanBtn.disabled=true;
     rawPanel.classList.add("hidden");
     rawPanel.classList.remove("expanded");
@@ -598,14 +610,13 @@
     detailsPanel.classList.remove("visible");
     summary.style.display="none";
     try{
+      const payload={dispute_category:categoryFromQuery(query),ticket:{description:query}};
+      if(base64Images.length)payload.images=base64Images;
+      if(urls.length)payload.image_urls=urls;
       const res=await fetch(base+"/api/v1/imgrecog/dispute",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":API_KEY},
-        body:JSON.stringify({
-	          image_urls:[userUrl],
-	          dispute_category:categoryFromQuery(query),
-	          ticket:{description:query}
-	        })
+        body:JSON.stringify(payload)
 	      });
       const {data,raw,isJson}=await readResponsePayload(res);
       latestRawJson=raw;

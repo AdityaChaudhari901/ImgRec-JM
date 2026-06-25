@@ -85,6 +85,23 @@ def test_rebuttal_not_replayed_from_original(monkeypatch):
     assert "rebuttal" in rebut["agent_flags"]
 
 
+def test_dispute_multiple_base64_images_all_forwarded():
+    captured = {}
+
+    async def fake_analyze(images, *a, **k):
+        captured["n"] = len(images)
+        return {"damage": {"detected": True, "type": "leakage", "severity": "severe"},
+                "ai_generated": {"ai_probability": 0.0}}
+
+    body = {"images": ["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB",
+                       "data:image/jpeg;base64,CCCC"],
+            "dispute_category": "damaged", "ticket": {"description": "leaking"}}
+    with patch("app.routers.dispute.analyze_dispute", side_effect=fake_analyze):
+        r = client.post("/api/v1/imgrecog/dispute", json=body, headers=HEADERS)
+    assert r.status_code == 200
+    assert captured["n"] == 3  # all three images forwarded to the analyzer
+
+
 def test_dispute_via_image_urls_no_shipment():
     from app.services.image_url_fetcher import FetchedImage
 
