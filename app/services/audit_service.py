@@ -30,6 +30,7 @@ from app.db.repository import (
     DuplicateDecision,
     get_decision_repository,
 )
+from app.models.dispute_response import DisputeResponse
 from app.models.response import ActionResult, ScanResponse
 from app.models.verify_response import VerifyClaimResponse
 from app.storage.object_store import get_object_store
@@ -41,6 +42,7 @@ logger = get_logger(__name__)
 _RESPONSE_MODELS: dict[str, type[BaseModel]] = {
     "scan": ScanResponse,
     "verify_claim": VerifyClaimResponse,
+    "dispute": DisputeResponse,
 }
 
 
@@ -84,6 +86,10 @@ def _derive_routing(endpoint: str, response: BaseModel) -> Tuple[str, Optional[s
         assert isinstance(response, ScanResponse)
         routed_to = "human" if "manual review" in (response.action.message or "").lower() else "auto"
         return response.action.type, response.status, response.action.priority, routed_to
+    if endpoint == "dispute":
+        assert isinstance(response, DisputeResponse)
+        routed_to = "human" if response.route == "agent" else "auto"
+        return response.decision, response.category, None, routed_to
     assert isinstance(response, VerifyClaimResponse)
     routed_to = "human" if response.recommended_action == "manual_review" else "auto"
     return response.recommended_action, response.verdict, None, routed_to
@@ -105,6 +111,14 @@ def _downgrade(endpoint: str, response: BaseModel) -> BaseModel:
                 )
             }
         )
+    if endpoint == "dispute":
+        return response.model_copy(update={
+            "decision": "agent",
+            "route": "agent",
+            "agent_flags": list(getattr(response, "agent_flags", []) or []) + ["audit_write_failed"],
+            "recommendation": (getattr(response, "recommendation", "") or "")
+            + " [Audit write failed — forced agent review.]",
+        })
     note = " [Audit write failed — forced manual review; no automated action taken.]"
     return response.model_copy(
         update={
@@ -116,7 +130,11 @@ def _downgrade(endpoint: str, response: BaseModel) -> BaseModel:
 
 
 def _prompt_version(endpoint: str) -> str:
-    return settings.scan_prompt_version if endpoint == "scan" else settings.verify_prompt_version
+    if endpoint == "scan":
+        return settings.scan_prompt_version
+    if endpoint == "dispute":
+        return settings.dispute_prompt_version
+    return settings.verify_prompt_version
 
 
 async def persist_decision(
