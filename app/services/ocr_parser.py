@@ -49,3 +49,52 @@ def calculate_days_since_expiry(
         return None
     delta = ((today or date.today()) - expiry).days
     return delta if delta > 0 else None
+
+
+def final_printed_mrp(values: object) -> Optional[float]:
+    """Pick the final (post-strikethrough) MRP from OCR'd candidate values.
+
+    A reduced-price pack prints both the old (struck-through, higher) and the
+    new (lower) MRP. The lowest positive value is the one the customer pays
+    against, so it is the right basis for an overcharge comparison.
+    """
+    if not isinstance(values, (list, tuple)):
+        return None
+    nums: list[float] = []
+    for v in values:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if f > 0:
+            nums.append(f)
+    return min(nums) if nums else None
+
+
+def days_until_expiry(expiry_iso: Optional[str], today: Optional[date] = None) -> Optional[int]:
+    """Whole days from today until expiry. Negative if already expired, None if unusable."""
+    if not expiry_iso:
+        return None
+    try:
+        expiry = date.fromisoformat(expiry_iso)
+    except ValueError:
+        return None
+    return (expiry - (today or date.today())).days
+
+
+def shelf_left_pct(
+    mfg_iso: Optional[str], exp_iso: Optional[str], today: Optional[date] = None
+) -> Optional[float]:
+    """Remaining shelf life as a percent of total shelf life. None if unusable."""
+    if not mfg_iso or not exp_iso:
+        return None
+    try:
+        mfg = date.fromisoformat(mfg_iso)
+        exp = date.fromisoformat(exp_iso)
+    except ValueError:
+        return None
+    total = (exp - mfg).days
+    if total <= 0:
+        return None
+    remaining = (exp - (today or date.today())).days
+    return round(remaining / total * 100, 2)
