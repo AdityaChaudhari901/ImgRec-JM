@@ -26,12 +26,13 @@ def _signals(case: EvalCase) -> dict:
     return {"ai_probability": float(ai), "dedup_cross": False, "web_hard": False}
 
 
-def run_case(case: EvalCase) -> CasePrediction:
+def _predict(case: EvalCase, observations: dict) -> CasePrediction:
+    """Run the shared decision path over a given observation set."""
     ticket = Ticket(**case.ticket)
-    category, _source = classify_category(case.category, ticket)
+    category, source = classify_category(case.category, ticket)
 
-    observations = dict(case.observations)
-    observations["_desc_len"] = len((ticket.description or "").strip())
+    obs = dict(observations)
+    obs["_desc_len"] = len((ticket.description or "").strip())
 
     shipment = Shipment(**case.shipment)
 
@@ -42,7 +43,7 @@ def run_case(case: EvalCase) -> CasePrediction:
         dispute_engine._today = lambda: pinned
     try:
         decision = dispute_engine.decide(
-            category, _source, observations, shipment, case.is_rebuttal, _signals(case)
+            category, source, obs, shipment, case.is_rebuttal, _signals(case)
         )
     finally:
         dispute_engine._today = original_today
@@ -56,5 +57,27 @@ def run_case(case: EvalCase) -> CasePrediction:
     )
 
 
+def run_case(case: EvalCase) -> CasePrediction:
+    """Engine mode: use the labelled observations already in the case."""
+    return _predict(case, case.observations)
+
+
 def run_dataset(cases: List[EvalCase]) -> List[CasePrediction]:
     return [run_case(c) for c in cases]
+
+
+async def run_case_e2e(case: EvalCase) -> CasePrediction:
+    """End-to-end mode: fetch observations from Gemini over the real images, then
+    run the same engine. Requires real images + provider credentials."""
+    # Imported lazily so engine-mode eval never needs the Gemini SDK/credentials.
+    from app.services.dispute_service import analyze_dispute
+
+    comment = (case.ticket.get("description") or case.ticket.get("title") or "")
+    observations = await analyze_dispute(
+        case.images, case.category, case.shipment.get("product_name", ""), comment
+    )
+    return _predict(case, observations)
+
+
+async def run_dataset_e2e(cases: List[EvalCase]) -> List[CasePrediction]:
+    return [await run_case_e2e(c) for c in cases]
