@@ -73,8 +73,9 @@ async def evaluate_links(
             logger.error("link_evaluation_provider_auth_failed", code=code, error=str(exc))
             raise HTTPException(
                 status_code=503,
-                detail=(
-                    "Image analysis provider is not configured for this deployment"
+                detail=_provider_error_detail(
+                    "Image analysis provider is not configured for this deployment",
+                    exc,
                 ),
             )
         if code in (429, 503):
@@ -160,3 +161,13 @@ def _cancel_pending(*tasks) -> None:
     for task in tasks:
         if task is not None and not task.done():
             task.cancel()
+
+
+def _provider_error_detail(message: str, exc: Exception):
+    if not settings.provider_error_details_enabled:
+        return message
+    return {
+        "message": message,
+        "provider_code": getattr(exc, "code", None),
+        "provider_error": str(exc)[:1200],
+    }

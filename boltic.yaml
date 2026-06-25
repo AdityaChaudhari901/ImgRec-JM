@@ -65,6 +65,7 @@ serverlessConfig:
         GEMINI_MODEL: gemini-2.5-flash
         LOG_LEVEL: info
         PORT: "8080"
+        PROVIDER_ERROR_DETAILS_ENABLED: "true"
         USE_VERTEX: "true"
         VERTEX_PROJECT_ID: alien-slice-499511-f8
         VERTEX_REGION: us-east5
