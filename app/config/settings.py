@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     google_api_key: str = "missing-google-api-key"
     vertex_project_id: str = "missing-project-id"
     vertex_region: str = "us-central1"
+    # Inline service-account key JSON for Vertex auth on serverless runtimes that
+    # can't mount a key file (e.g. Boltic). When set and USE_VERTEX is true, the
+    # Gemini client authenticates with these credentials. Empty -> fall back to
+    # Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS / metadata).
+    google_credentials_json: str = ""
     kaily_api_secret: str = "missing-kaily-secret"
     # When True, route Gemini calls through Vertex AI (bills the GCP project /
     # uses its credits, auth via Application Default Credentials). When False,

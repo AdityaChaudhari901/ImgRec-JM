@@ -55,7 +55,11 @@ def _get_vision_client():
     if _client is None:
         from google.cloud import vision  # lazy import
 
-        _client = vision.ImageAnnotatorClient()
+        from app.utils.gcp_auth import google_sa_credentials
+
+        # Same inline-credentials path as Vertex so Vision authenticates on
+        # serverless; None falls back to ADC.
+        _client = vision.ImageAnnotatorClient(credentials=google_sa_credentials())
     return _client
 
 

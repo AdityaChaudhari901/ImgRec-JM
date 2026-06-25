@@ -8,6 +8,7 @@ from google import genai
 from google.genai import types
 
 from app.config.settings import settings
+from app.utils.gcp_auth import google_sa_credentials
 from app.utils.image_utils import extract_base64_data
 from app.utils.logger import get_logger
 
@@ -117,6 +118,7 @@ def get_client(provider: str | None = None) -> genai.Client:
                 vertexai=True,
                 project=settings.vertex_project_id,
                 location=settings.vertex_region,
+                credentials=google_sa_credentials(),
             )
         else:
             _clients[selected] = genai.Client(api_key=settings.google_api_key)
