@@ -619,6 +619,36 @@ rollout — start subjective categories (poor_quality, smell, quantity) in
 recommend-only and promote them to autonomous once they clear the accuracy bar,
 without a redeploy.
 
+### Accuracy eval harness
+
+Measure dispute accuracy with `eval_harness/` — a labelled-case runner that scores
+the real classifier + decision engine and reports per-category accuracy, an
+approve/reject/agent confusion matrix, and approve precision/recall.
+
+```bash
+# Engine mode (offline, no API cost) — scores the deterministic logic against the
+# seed labelled set; gates at 95%.
+venv/bin/python -m eval_harness.run --threshold 0.95
+
+# Custom labelled set:
+venv/bin/python -m eval_harness.run --manifest path/to/cases.jsonl --threshold 0.95
+
+# End-to-end (real Gemini over real images) — drop labelled JioMart photos into a
+# manifest with "images": [...] and run:
+venv/bin/python -m eval_harness.run --mode e2e --threshold 0.95
+```
+
+The bundled `eval_harness/data/seed_manifest.jsonl` covers every category and its
+decision boundaries (45-day edge, dairy 30% edge, MRP equality, high-value ceiling,
+counterfeit/rebuttal/AI/dedup escalations, classification fallback) and is asserted
+to score **100%** in CI (`tests/test_eval_seed_golden.py`) — it doubles as a golden
+regression set, so any change to a decision rule that breaks a boundary fails the
+build. To get the *model-level* number, add real labelled photos and run `--mode e2e`.
+
+> Engine mode measures the engine's **recommendation** (approve/reject/agent) — the
+> business-logic accuracy. Whether a category auto-acts is a separate routing policy
+> (`DISPUTE_AUTONOMOUS_CATEGORIES` / `DISPUTE_ASSIST_MODE`).
+
 ---
 
 ## 8. Deploy to Boltic (serverless)
