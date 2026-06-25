@@ -42,11 +42,18 @@ async def dispute(request: Request, body: DisputeRequest) -> DisputeResponse:
     except ValueError as exc:
         raise HTTPException(status_code=413, detail=str(exc))
 
-    # Idempotency (reuse the shared helper; image identity = primary image phash).
     image_phash = compute_image_phash(primary_image)
+
+    # Resolve the category BEFORE the idempotency identity so two different
+    # disputes on the same order+image don't collide (a damage claim must not
+    # replay a prior MRP verdict). The scope also separates a rebuttal from the
+    # original decision it is contesting. An explicit idempotency_key/claim_id
+    # still wins (the caller owns idempotency in that case).
+    category, source = classify_category(body.dispute_category, body.ticket)
+    idem_scope = f"dispute:{category}:rb{int(body.is_rebuttal)}"
     idempotency_key = build_idempotency_key(
         body.idempotency_key, body.claim_id, body.shipment.order_tracking_id,
-        "dispute", image_phash, primary_image,
+        idem_scope, image_phash, primary_image,
     )
     replay = await find_replay("dispute", idempotency_key)
     if replay is not None:
@@ -54,8 +61,7 @@ async def dispute(request: Request, body: DisputeRequest) -> DisputeResponse:
                     order_id=body.shipment.order_tracking_id, request_id=replay.request_id)
         return replay
 
-    # Category first — if unresolved, escalate without a model call.
-    category, source = classify_category(body.dispute_category, body.ticket)
+    # If category unresolved, escalate without a model call.
     if category is None:
         resp = _assemble(body, None, "none", {},
                          decision="agent", route="agent", flags=["insufficient_data"],
