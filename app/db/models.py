@@ -63,10 +63,19 @@ class ClaimDecision(Base):
 
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # ---- Dispute verification (/dispute) — nullable, expand/contract safe -----
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
+    category_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    decision: Mapped[str | None] = mapped_column(String, nullable=True)
+    route: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_flags: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
+    refund: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
+
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_claim_decisions_idem"),
         CheckConstraint(
-            "endpoint IN ('scan','verify_claim')", name="ck_claim_decisions_endpoint"
+            "endpoint IN ('scan','verify_claim','dispute')",
+            name="ck_claim_decisions_endpoint",
         ),
         CheckConstraint(
             "routed_to IN ('auto','human','challenge')", name="ck_claim_decisions_routed"
