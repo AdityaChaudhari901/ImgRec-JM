@@ -515,43 +515,43 @@
     return text.slice(0,180);
   }
 
-	  function renderLinkSummary(d){
+	  function categoryFromQuery(q){
+	    const s=(q||"").toLowerCase();
+	    if(/expir/.test(s))return "expiry";
+	    if(/damage|leak|broken|torn|crush|tamper/.test(s))return "damaged";
+	    if(/mrp|price|overcharg/.test(s))return "mrp_abuse";
+	    if(/quantity|missing|short|fewer/.test(s))return "quantity_mismatch";
+	    if(/wrong|incorrect/.test(s))return "wrong_product";
+	    if(/smell|stink|odou?r|foul/.test(s))return "smell";
+	    if(/quality|stale|spoil|wilt|discolor/.test(s))return "poor_quality";
+	    return null;
+	  }
+	  function renderDispute(d){
 	    const sb=document.getElementById("summary");sb.style.display="block";
 	    const badges=document.getElementById("badges");
-	    const statusMap={expired:"b-expired",damaged:"b-damaged",valid:"b-valid",unclear:"b-unclear"};
-	    const decisionMap={accept_claim:"b-valid",reject_claim:"b-expired",review:"b-unclear"};
-	    const query=queryText.value.trim();
-	    const decision=d.decision?.decision||"review";
-	    const productStatus=d.product_status?.status||"unclear";
-	    const productStatusScore=Number(d.product_status?.score??0);
+	    const decMap={approve:"b-valid",reject:"b-expired",agent:"b-unclear"};
+	    const refund=d.refund||{};
 	    badges.innerHTML=
-	      `<span class="badge ${decisionMap[decision]||'b-unclear'}">Decision ${decision.replace("_"," ")}</span>`+
-	      `<span class="badge ${statusMap[productStatus]||statusMap.unclear}">Product ${productStatus}</span>`+
-	      `<span class="badge b-unclear">${productStatusScore}% status confidence</span>`+
-	      `<span class="badge b-valid">Product match ${d.product_match.score}%</span>`+
-	      `<span class="badge b-unclear">Authenticity ${d.authenticity.score}%</span>`+
-	      `<span class="badge b-damaged">Query ${d.query_match.score}%</span>`;
+	      `<span class="badge ${decMap[d.decision]||'b-unclear'}">Decision ${d.decision}</span>`+
+	      `<span class="badge b-unclear">Route ${d.route}</span>`+
+	      `<span class="badge b-valid">${(d.category||'n/a').replace("_"," ")}</span>`+
+	      (refund.eligible?`<span class="badge b-damaged">Refund ₹${refund.amount} (${refund.type})</span>`:"")+
+	      ((d.agent_flags||[]).length?`<span class="badge b-expired">${d.agent_flags.join(", ")}</span>`:"");
 	    const quick=document.getElementById("quickResult");
 	    quick.innerHTML=
-	      quickItem("Decision",decision.replace("_"," "))+
-	      quickItem("Status",`${productStatus} (${productStatusScore}%)`)+
-	      quickItem("Query match",`${d.query_match.score}%`);
+	      quickItem("Decision",d.decision)+
+	      quickItem("Route",d.route)+
+	      quickItem("Category",`${d.category||'none'} (${d.category_source})`);
 	    const kv=document.getElementById("kv");
 	    kv.innerHTML=
-	      row("Final decision",decision.replace("_"," "))+
-	      row("Decision verdict",d.decision?.verdict||"not provided")+
-	      row("Decision detail",d.decision?.detail||"none")+
-	      row("Decision reasons",(d.decision?.reason_codes||[]).join(", ")||"none")+
-	      row("Product status",`${productStatus} (${productStatusScore}%)`)+
-	      row("Status verdict",d.product_status?.verdict||"not provided")+
-	      row("Status detail",d.product_status?.detail||"none")+
-	      row("Customer query",query||"not provided")+
-	      row("Authenticity",`${d.authenticity.score}% - ${d.authenticity.verdict}`)+
-	      row("Product match",`${d.product_match.score}% - ${d.product_match.verdict}`)+
-	      row("Query match",`${d.query_match.score}% - ${d.query_match.verdict}`)+
-	      row("Auth detail",d.authenticity.detail||"none")+
-	      row("Product detail",d.product_match.detail||"none")+
-	      row("Query detail",d.query_match.detail||"none");
+	      row("Decision",d.decision)+
+	      row("Route",d.route)+
+	      row("Category",`${d.category||'none'} (${d.category_source})`)+
+	      row("Agent flags",(d.agent_flags||[]).join(", ")||"none")+
+	      row("Refund",refund.eligible?`eligible — ₹${refund.amount} (${refund.type})`:"not eligible")+
+	      row("Seller debit (3P)",refund.seller_debit?"yes — assign to MPT":"no")+
+	      row("Recommendation",d.recommendation||"none")+
+	      row("Confidence",String(d.confidence));
 	    detailsPanel.classList.add("visible");
 	  }
 	  const quickItem=(k,v)=>`<div class="quick-item"><span>${escapeHtml(k)}</span><strong>${escapeHtml(v)}</strong></div>`;
@@ -584,9 +584,9 @@
     const jsonEl=document.getElementById("json");
     const summary=document.getElementById("summary");
     status.classList.remove("err");
-    if(!userUrl||!productUrl||!query){
+    if(!userUrl||!query){
       status.classList.add("err");
-      status.textContent="Enter user image URL, product image URL, and query.";
+      status.textContent="Enter a customer image URL and a query.";
       return;
     }
     status.innerHTML=`<span class="spin"></span>Scanning…`;
@@ -598,13 +598,13 @@
     detailsPanel.classList.remove("visible");
     summary.style.display="none";
     try{
-      const res=await fetch(base+"/api/v1/imgrecog/evaluate-links",{
+      const res=await fetch(base+"/api/v1/imgrecog/dispute",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":API_KEY},
         body:JSON.stringify({
-	          user_image_url:userUrl,
-	          product_image_url:productUrl,
-	          query
+	          image_urls:[userUrl],
+	          dispute_category:categoryFromQuery(query),
+	          ticket:{description:query}
 	        })
 	      });
       const {data,raw,isJson}=await readResponsePayload(res);
@@ -612,7 +612,7 @@
       rawPanel.classList.remove("hidden");
       if(isJson)jsonEl.innerHTML=syntaxHighlight(data);
       else jsonEl.textContent=raw;
-      if(res.ok){status.textContent=`✓ ${res.status} OK`;renderLinkSummary(data);}
+      if(res.ok){status.textContent=`✓ ${res.status} OK`;renderDispute(data);}
       else{status.classList.add("err");status.textContent=`✗ ${res.status} — ${data.detail?(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail)):'error'}`;summary.style.display="none";}
     }catch(e){
       status.classList.add("err");
