@@ -14,46 +14,29 @@ async def test_root_serves_demo_html():
 
 
 @pytest.mark.asyncio
-async def test_demo_focuses_on_product_status_without_visible_identity_fields():
+async def test_demo_targets_the_single_dispute_endpoint():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.get("/")
 
     assert r.status_code == 200
     html = r.text
-    assert 'id="orderId"' not in html
-    assert 'id="userId"' not in html
-    assert 'id="vOrderId"' not in html
-    assert 'id="vUserId"' not in html
-    assert "JM-29384" not in html
-    assert "u_kaily_123" not in html
-    assert "Product status" in html
-    assert "Expired" in html
-    assert "Damaged" in html
-    assert "Valid" in html
-    assert "Customer query" in html
+    # The demo console drives the one /dispute endpoint and nothing else.
+    assert "/api/v1/imgrecog/dispute" in html
+    assert "/api/v1/imgrecog/evaluate-links" not in html
+    assert "/api/v1/imgrecog/scan" not in html
+    assert "/api/v1/imgrecog/verify-claim" not in html
+    # Dispute-specific rendering wired up.
+    assert "renderDispute" in html
+    assert "categoryFromQuery" in html
+    # Core console structure preserved.
     assert 'id="queryText"' in html
     assert 'id="userImageUrl"' in html
-    assert 'id="productImageUrl"' in html
     assert 'id="scanBtn"' in html
-    assert "Scan product" in html
-    assert "Final decision" in html
-    assert "Decision reasons" in html
-    assert "Raw JSON response" in html
-    assert "readResponsePayload" in html
-    assert "summarizeHttpText" in html
-    assert "Server returned malformed JSON response" in html
     assert 'id="rawPanel"' in html
     assert 'id="copyJson"' in html
-    assert 'id="expandJson"' in html
     assert 'id="detailsPanel"' in html
-    assert "quick-result" in html
-    assert "decision" in html
-    assert "product_status" in html
-    assert "/api/v1/imgrecog/evaluate-links" in html
-    assert "/api/v1/imgrecog/scan" not in html
-    assert "Evaluate links" not in html
-    assert "Query presets" not in html
-    assert "data-query" not in html
-    assert 'id="evaluateBtn"' not in html
-    assert 'id="drop"' not in html
+    assert "readResponsePayload" in html
+    # No file-upload / drag-drop, no leftover identity fields.
     assert 'type="file"' not in html
+    assert 'id="orderId"' not in html
+    assert 'id="userId"' not in html
