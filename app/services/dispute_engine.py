@@ -8,11 +8,12 @@ gates (counterfeit, rebuttal, fraud signals, refund ceiling, assist/autonomous).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import List, Optional
 
 from app.config.settings import settings
 from app.models.dispute_request import Shipment
-from app.services.ocr_parser import final_printed_mrp
+from app.services.ocr_parser import days_until_expiry, final_printed_mrp, shelf_left_pct
 
 
 @dataclass
@@ -77,6 +78,41 @@ def _decide_mrp(observations: dict, shipment: Shipment) -> DisputeDecision:
     return DisputeDecision(decision="approve", refund=refund, confidence=0.9, recommendation=rec)
 
 
+def _today() -> date:
+    return date.today()
+
+
+def _decide_expiry(observations: dict, shipment: Shipment) -> DisputeDecision:
+    ocr = observations.get("ocr") or {}
+    if shipment.product_type == "fnv":
+        # FNV has variable shelf life — judge by visible quality instead.
+        return _decide_poor_quality(observations, shipment)
+
+    if shipment.product_type == "dairy":
+        pct = shelf_left_pct(ocr.get("manufacture_date"), ocr.get("expiry_date"), _today())
+        if pct is None:
+            return _agent("low_confidence", "Dairy MFG/EXP not readable; agent to verify shelf life.")
+        if pct < settings.dairy_min_shelf_pct:
+            return DisputeDecision(decision="approve", refund=_full_refund(shipment), confidence=0.9,
+                                   recommendation=f"Approve: dairy shelf life {pct}% < {settings.dairy_min_shelf_pct}%.")
+        return DisputeDecision(decision="reject", refund=_no_refund(), confidence=0.9,
+                               recommendation=f"Reject: dairy shelf life {pct}% ≥ {settings.dairy_min_shelf_pct}%.")
+
+    days = days_until_expiry(ocr.get("expiry_date"), _today())
+    if days is None:
+        return _agent("low_confidence", "Expiry date not readable; agent to verify.")
+    if days <= settings.non_fnv_near_expiry_days:
+        return DisputeDecision(decision="approve", refund=_full_refund(shipment), confidence=0.9,
+                               recommendation=f"Approve: {days} days to expiry ≤ {settings.non_fnv_near_expiry_days}.")
+    return DisputeDecision(decision="reject", refund=_no_refund(), confidence=0.9,
+                           recommendation=f"Reject: {days} days to expiry > {settings.non_fnv_near_expiry_days}.")
+
+
+def _decide_poor_quality(observations: dict, shipment: Shipment) -> DisputeDecision:
+    # Replaced with full logic in Task 8.
+    return _agent("low_confidence", "Quality assessment pending.")
+
+
 # ---- escalation gates ------------------------------------------------------
 
 def _autonomous_categories() -> set:
@@ -137,4 +173,5 @@ def decide(category: Optional[str], source: str, observations: dict, shipment: S
 # Registered at module bottom so every _decide_* is defined before lookup.
 _BRANCHES = {
     "mrp_abuse": _decide_mrp,
+    "expiry": _decide_expiry,
 }
