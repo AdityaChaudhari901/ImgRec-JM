@@ -127,6 +127,26 @@ class Settings(BaseSettings):
     pixelbin_url_template: str = ""
     pixelbin_allow_direct_fallback: bool = True
 
+    # ---- Grocery dispute verification (/dispute) ---------------------------
+    # Approved refund >= this (INR) routes to a human agent with the AI
+    # recommendation attached, even when the category decision is "approve".
+    refund_auto_approve_max: float = 500
+    # When true, every dispute decision becomes recommend-only (route=agent) —
+    # a shadow/assist period without a redeploy.
+    dispute_assist_mode: bool = False
+    # Comma-separated categories allowed to auto-act. Others are recommend-only
+    # until they clear the accuracy bar (progressive rollout).
+    dispute_autonomous_categories: str = "mrp_abuse,expiry,wrong_product,damaged"
+    # Dairy: approve near-expiry when remaining shelf life is below this percent.
+    dairy_min_shelf_pct: float = 30
+    # Non-FNV: approve when days until expiry is at or below this (Legal Metrology).
+    non_fnv_near_expiry_days: int = 45
+    # Max customer images accepted per dispute (bounded input).
+    dispute_max_images: int = 5
+    # Per-instance concurrency cap on Gemini calls (quota/backpressure).
+    gemini_max_concurrency: int = 8
+    dispute_prompt_version: str = "dispute-v1"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
