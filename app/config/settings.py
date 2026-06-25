@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # use the AI Studio API key (google_api_key) and its prepay billing.
     use_vertex: bool = False
     gemini_model: str = "gemini-2.0-flash-001"
-    gemini_timeout_seconds: int = 15
+    gemini_timeout_seconds: int = 45
     max_image_size_mb: int = 10
     environment: str = "development"
     log_level: str = "INFO"
@@ -94,6 +94,31 @@ class Settings(BaseSettings):
     dedup_hamming_threshold: int = 10
     # Only consider prior claims within this many days a duplicate (the "window").
     dedup_window_days: int = 30
+
+    # ---- URL-based image evaluation (/evaluate-links) -----------------------
+    # The public API accepts image links, but the existing engine works on bytes.
+    # These controls make URL ingestion bounded and SSRF-resistant.
+    url_fetch_timeout_seconds: float = 10.0
+    url_fetch_max_redirects: int = 3
+    url_fetch_processing_retries: int = 2
+    url_fetch_processing_retry_delay_seconds: float = 0.5
+    url_fetch_user_agent: str = "Kaily-ImgRec/1.0"
+    link_eval_model_max_edge_px: int = 1280
+    link_eval_model_image_quality: int = 85
+    link_decision_min_authenticity_score: int = 70
+    link_decision_min_product_match_score: int = 75
+    link_decision_min_status_score: int = 60
+    link_decision_min_query_match_score: int = 60
+
+    # PixelBin is a CDN/preprocessing layer, not a detector. Configure a template
+    # when you want every safe source URL normalized through PixelBin before model
+    # analysis. Supported placeholders:
+    #   {url} {url_encoded} {host} {path} {path_encoded}
+    # Example:
+    #   https://cdn.pixelbin.io/v2/<cloud>/<zone>/wrkr/t.resize(w:1280)/{path}
+    pixelbin_enabled: bool = False
+    pixelbin_url_template: str = ""
+    pixelbin_allow_direct_fallback: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -47,7 +47,7 @@ Then fill in `.env`:
 | `GOOGLE_API_KEY` | Google AI Studio API key (used only when `USE_VERTEX=false`) |
 | `KAILY_API_SECRET` | Shared secret Kaily sends as `x-api-key` |
 | `GEMINI_MODEL` | Model id (default `gemini-2.0-flash-001`) |
-| `GEMINI_TIMEOUT_SECONDS` | Hard timeout for the Gemini call (default 15) |
+| `GEMINI_TIMEOUT_SECONDS` | Hard timeout for the Gemini call (default 45) |
 | `MAX_IMAGE_SIZE_MB` | Max decoded image size before a 413 (default 10) |
 | `VERTEX_PROJECT_ID` / `VERTEX_REGION` | GCP project/region (used when `USE_VERTEX=true`) |
 | `GEMINI_MODEL` | Model id. Note: on Vertex, the id must be provisioned for your project (this project exposes `gemini-2.5-flash`, not `gemini-2.0-flash-001`) |
@@ -318,7 +318,127 @@ AUTHENTICITY_REVIEW_THRESHOLD=0.45
 
 ---
 
-## 7c. Production hardening
+## 7c. URL-based image evaluation
+
+Use this endpoint when the caller sends image links instead of base64. It accepts
+a customer/user image URL, an official product image URL, and a query such as
+`expired product`, `damaged product`, or `valid product`. It also auto-classifies
+the submitted user image as `expired`, `damaged`, `valid`, or `unclear`.
+
+### `POST /api/v1/imgrecog/evaluate-links`
+
+**Request**
+
+```json
+{
+  "user_image_url": "https://example.com/customer-photo.jpg",
+  "product_image_url": "https://example.com/catalog-product.jpg",
+  "query": "damaged product"
+}
+```
+
+**Response `200`**
+
+```json
+{
+  "decision": {
+    "decision": "accept_claim",
+    "verdict": "Accept claim because the product appears damaged.",
+    "detail": "Authenticity, product match, product status, and query-match gates all passed.",
+    "reason_codes": ["damaged_claim_supported"]
+  },
+  "product_status": {
+    "status": "damaged",
+    "score": 91,
+    "verdict": "Product appears damaged.",
+    "detail": "Bottle cap area appears broken."
+  },
+  "authenticity": {
+    "score": 92,
+    "verdict": "Image is likely an original mobile customer photo.",
+    "detail": "Natural background and perspective; web check found 0 full match(es), 0 partial match(es), 0 domain(s)"
+  },
+  "product_match": {
+    "score": 96,
+    "verdict": "The same product and packaging are visible.",
+    "detail": "Brand, bottle shape, and label colors match."
+  },
+  "query_match": {
+    "score": 90,
+    "verdict": "Visible damage supports the query.",
+    "detail": "Bottle cap area appears broken."
+  }
+}
+```
+
+**Accuracy design**
+
+- The final `decision` is computed deterministically in code. Gemini provides
+  observations and scores; business routing uses configured gates.
+- Decision order is strict: authenticity gate, product-match gate, product-status
+  gate, then query-match gate.
+- Product status is an independent auto-check from the user image. It does not
+  depend on the query text.
+- Readable expiry labels are parsed and compared in Python after Gemini OCR, so
+  a past expiry date overrides a model status that incorrectly says `valid`.
+- Product matching uses **both images in the same Gemini call** and asks for
+  brand/logo, packaging geometry, label layout, visible OCR, SKU/variant/flavor,
+  size, seal/cap style, and category. It is intentionally conservative when SKU
+  evidence is incomplete.
+- Query matching is evidence-specific: expiry needs readable expired date or
+  strong spoilage evidence; damage needs visible physical damage; valid needs a
+  visible product with no contradictory expiry/damage evidence.
+- Authenticity combines Gemini visual authenticity, metadata/AI-detector signals,
+  and Google Vision web provenance. A confirmed public-web full match across the
+  configured domain threshold returns a very low authenticity score.
+- Valid products produce `reject_claim`. Damaged/expired products produce
+  `accept_claim` only when the customer query agrees with visible evidence.
+  Low authenticity, wrong product, unclear status, or mismatched query produces
+  `review`.
+
+**Decision gates**
+
+```bash
+GEMINI_TIMEOUT_SECONDS=45
+LINK_EVAL_MODEL_MAX_EDGE_PX=1280
+LINK_EVAL_MODEL_IMAGE_QUALITY=85
+LINK_DECISION_MIN_AUTHENTICITY_SCORE=70
+LINK_DECISION_MIN_PRODUCT_MATCH_SCORE=75
+LINK_DECISION_MIN_STATUS_SCORE=60
+LINK_DECISION_MIN_QUERY_MATCH_SCORE=60
+```
+
+The URL evaluator preserves original fetched bytes for authenticity/web
+provenance checks, but sends a resized JPEG variant to Gemini. This keeps large
+PixelBin `original` images from causing avoidable model timeouts.
+
+**URL safety controls**
+
+- Only `http` and `https` URLs are accepted.
+- Credentials in URLs are rejected.
+- Hosts resolving to localhost, private, link-local, reserved, or other
+  non-public networks are rejected before fetch.
+- Redirects are revalidated and capped.
+- Image type and decoded raster validity are checked.
+- Image size is capped by `MAX_IMAGE_SIZE_MB`.
+
+**PixelBin**
+
+PixelBin is treated as a CDN/preprocessing layer, not the detector. Configure a
+template when your PixelBin URL datasource/storage path is ready:
+
+```bash
+PIXELBIN_ENABLED=true
+PIXELBIN_URL_TEMPLATE=https://cdn.pixelbin.io/v2/<cloud>/<zone>/wrkr/t.resize(w:1280)/{url_encoded}
+PIXELBIN_ALLOW_DIRECT_FALLBACK=true
+```
+
+Supported template placeholders are `{url}`, `{url_encoded}`, `{host}`, `{path}`,
+and `{path_encoded}`.
+
+---
+
+## 7d. Production hardening
 
 What's already in place and what to wire up before a fully-autonomous launch.
 
@@ -446,13 +566,17 @@ Restart the server; the new model id appears in startup logs and in
 ```
 imgrecog-kaily/
 ├── app/
-│   ├── main.py                 # FastAPI app + lifespan + Boltic handler export
-│   ├── routers/scan.py         # POST /api/v1/imgrecog/scan
+│   ├── main.py                    # FastAPI app + lifespan + Boltic handler export
+│   ├── routers/scan.py            # POST /api/v1/imgrecog/scan
+│   ├── routers/verify.py          # POST /api/v1/imgrecog/verify-claim
+│   ├── routers/link_evaluation.py # POST /api/v1/imgrecog/evaluate-links
 │   ├── services/
-│   │   ├── gemini_service.py   # Gemini 2.0 Flash call (SDK, async + timeout)
-│   │   ├── ocr_parser.py       # Date normalisation + expiry maths
-│   │   ├── damage_analyzer.py  # Damage taxonomy validation + severity score
-│   │   └── decision_engine.py  # Deterministic refund/exchange decision
+│   │   ├── gemini_service.py      # Gemini call (SDK, async + timeout)
+│   │   ├── link_evaluation_service.py # URL pair analysis + score shaping
+│   │   ├── image_url_fetcher.py   # SSRF-safe URL fetch + PixelBin templating
+│   │   ├── ocr_parser.py          # Date normalisation + expiry maths
+│   │   ├── damage_analyzer.py     # Damage taxonomy validation + severity score
+│   │   └── decision_engine.py     # Deterministic refund/exchange decision
 │   ├── models/                 # Pydantic v2 request/response schemas
 │   ├── middleware/             # auth · error handlers · rate limit
 │   ├── config/settings.py      # Pydantic BaseSettings (all env vars)
