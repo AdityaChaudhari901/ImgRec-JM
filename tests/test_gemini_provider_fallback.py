@@ -48,7 +48,7 @@ async def test_ai_studio_quota_error_retries_with_vertex(monkeypatch):
     response = await gemini_service.generate_content_with_fallback(
         model="gemini-test",
         contents=["prompt"],
-        config=gemini_service.build_generation_config(),
+        config=gemini_service.build_dispute_generation_config(),
     )
 
     assert response.text == "ok"
@@ -72,7 +72,7 @@ async def test_ai_studio_quota_error_does_not_retry_when_disabled(monkeypatch):
         await gemini_service.generate_content_with_fallback(
             model="gemini-test",
             contents=["prompt"],
-            config=gemini_service.build_generation_config(),
+            config=gemini_service.build_dispute_generation_config(),
         )
 
     assert calls == ["api_key"]

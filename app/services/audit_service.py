@@ -31,8 +31,6 @@ from app.db.repository import (
     get_decision_repository,
 )
 from app.models.dispute_response import DisputeResponse
-from app.models.response import ActionResult, ScanResponse
-from app.models.verify_response import VerifyClaimResponse
 from app.storage.object_store import get_object_store
 from app.utils.image_utils import extract_base64_data
 from app.utils.logger import get_logger
@@ -40,8 +38,6 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _RESPONSE_MODELS: dict[str, type[BaseModel]] = {
-    "scan": ScanResponse,
-    "verify_claim": VerifyClaimResponse,
     "dispute": DisputeResponse,
 }
 
@@ -82,59 +78,24 @@ async def find_replay(endpoint: str, idempotency_key: str) -> Optional[BaseModel
 
 def _derive_routing(endpoint: str, response: BaseModel) -> Tuple[str, Optional[str], Optional[str], str]:
     """(final_action, final_status, priority, routed_to) flattened for querying/alerting."""
-    if endpoint == "scan":
-        assert isinstance(response, ScanResponse)
-        routed_to = "human" if "manual review" in (response.action.message or "").lower() else "auto"
-        return response.action.type, response.status, response.action.priority, routed_to
-    if endpoint == "dispute":
-        assert isinstance(response, DisputeResponse)
-        routed_to = "human" if response.route == "agent" else "auto"
-        return response.decision, response.category, None, routed_to
-    assert isinstance(response, VerifyClaimResponse)
-    routed_to = "human" if response.recommended_action == "manual_review" else "auto"
-    return response.recommended_action, response.verdict, None, routed_to
+    assert isinstance(response, DisputeResponse)
+    routed_to = "human" if response.route == "agent" else "auto"
+    return response.decision, response.category, None, routed_to
 
 
 def _downgrade(endpoint: str, response: BaseModel) -> BaseModel:
-    """Safe fallback when the audit write fails: never auto-act, force human review."""
-    if endpoint == "scan":
-        return response.model_copy(
-            update={
-                "action": ActionResult(
-                    type="no_action",
-                    message=(
-                        "Audit record could not be persisted; routing this claim to "
-                        "manual review. No automated refund or exchange was initiated."
-                    ),
-                    refund_eligible=False,
-                    priority="high",
-                )
-            }
-        )
-    if endpoint == "dispute":
-        return response.model_copy(update={
-            "decision": "agent",
-            "route": "agent",
-            "agent_flags": list(getattr(response, "agent_flags", []) or []) + ["audit_write_failed"],
-            "recommendation": (getattr(response, "recommendation", "") or "")
-            + " [Audit write failed — forced agent review.]",
-        })
-    note = " [Audit write failed — forced manual review; no automated action taken.]"
-    return response.model_copy(
-        update={
-            "recommended_action": "manual_review",
-            "verdict": "review",
-            "agent_comment": (getattr(response, "agent_comment", "") or "") + note,
-        }
-    )
+    """Safe fallback when the audit write fails: never auto-act, force agent review."""
+    return response.model_copy(update={
+        "decision": "agent",
+        "route": "agent",
+        "agent_flags": list(getattr(response, "agent_flags", []) or []) + ["audit_write_failed"],
+        "recommendation": (getattr(response, "recommendation", "") or "")
+        + " [Audit write failed — forced agent review.]",
+    })
 
 
 def _prompt_version(endpoint: str) -> str:
-    if endpoint == "scan":
-        return settings.scan_prompt_version
-    if endpoint == "dispute":
-        return settings.dispute_prompt_version
-    return settings.verify_prompt_version
+    return settings.dispute_prompt_version
 
 
 async def persist_decision(

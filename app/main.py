@@ -13,9 +13,6 @@ from app.config.settings import settings
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.rate_limit import limiter
 from app.routers.dispute import router as dispute_router
-from app.routers.link_evaluation import router as link_evaluation_router
-from app.routers.scan import router
-from app.routers.verify import router as verify_router
 from app.services.gemini_service import get_client
 from app.utils.logger import get_logger
 
@@ -28,9 +25,7 @@ async def lifespan(app: FastAPI):
     print(f"[ImgRec] Server running on port {settings.port}")
     print(f"[ImgRec] Model: {settings.gemini_model}")
     print(f"[ImgRec] Environment: {settings.environment}")
-    print("[ImgRec] Kaily endpoint: POST /api/v1/imgrecog/scan")
-    print("[ImgRec] Claim verify:   POST /api/v1/imgrecog/verify-claim")
-    print("[ImgRec] Link evaluate:  POST /api/v1/imgrecog/evaluate-links")
+    print("[ImgRec] Dispute endpoint: POST /api/v1/imgrecog/dispute")
     print("[ImgRec] Health check: GET /health")
     print("[ImgRec] Readiness:    GET /ready")
     yield
@@ -77,9 +72,6 @@ async def request_id_middleware(request: Request, call_next):
 
 
 register_exception_handlers(app)
-app.include_router(router)
-app.include_router(verify_router)
-app.include_router(link_evaluation_router)
 app.include_router(dispute_router)
 
 
