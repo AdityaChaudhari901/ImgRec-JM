@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config.settings import settings
 from app.middleware.error_handler import register_exception_handlers
 from app.middleware.rate_limit import limiter
+from app.routers.dispute import router as dispute_router
 from app.routers.link_evaluation import router as link_evaluation_router
 from app.routers.scan import router
 from app.routers.verify import router as verify_router
@@ -79,6 +80,7 @@ register_exception_handlers(app)
 app.include_router(router)
 app.include_router(verify_router)
 app.include_router(link_evaluation_router)
+app.include_router(dispute_router)
 
 
 @app.get("/health")
